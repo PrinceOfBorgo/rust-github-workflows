@@ -185,7 +185,7 @@ jobs:
     outputs:
       artifact_path: ${{ steps.build.outputs.artifact }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - name: Build release binary
         id: build
@@ -195,7 +195,7 @@ jobs:
           cp target/release/my-app dist/my-app-${{ needs.bump_version.outputs.new_version }}
           echo "artifact=dist/my-app-${{ needs.bump_version.outputs.new_version }}" >> "$GITHUB_OUTPUT"
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: app-build
           path: dist/
@@ -262,7 +262,7 @@ validate:
   needs: bump_version
   runs-on: ubuntu-latest
   steps:
-    - uses: actions/checkout@v5
+    - uses: actions/checkout@v6
     - uses: dtolnay/rust-toolchain@stable
     - run: cargo test --all-features
     - run: cargo clippy --all-targets -- -D warnings

@@ -176,10 +176,10 @@ If you produce additional release artifacts (compiled binaries, Docker images, p
     needs: bump_and_changelog
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
       - name: Build your artifacts
         run: # your build commands
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: release-artifacts
           path: dist/

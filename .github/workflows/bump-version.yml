@@ -42,7 +42,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -88,7 +88,7 @@ jobs:
           echo "section_heading=$SECTION_HEADING" >> "$GITHUB_OUTPUT"
 
       - name: Upload updated files
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-files
           path: |
