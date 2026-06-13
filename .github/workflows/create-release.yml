@@ -12,22 +12,22 @@ on:
         required: true
         type: string
       changelog_path:
-        description: 'Path to CHANGELOG.md (relative to repo root)'
+        description: 'Path to CHANGELOG.md (relative to repo root). Default: `CHANGELOG.md`'
         required: false
         default: 'CHANGELOG.md'
         type: string
       release_assets:
-        description: 'JSON array of asset paths to attach to the release'
+        description: 'JSON array of asset paths to attach to the release. Default: `[]`'
         required: false
         default: '[]'
         type: string
       generate_release_notes:
-        description: 'Whether to auto-generate release notes from commits'
+        description: 'Whether to auto-generate release notes from commits. Default: `true`'
         required: false
         default: 'true'
         type: string
       target_branch:
-        description: 'Branch the release tag points to (used for auto-generated notes and the CHANGELOG link)'
+        description: 'Branch the release tag points to (used for auto-generated notes and the CHANGELOG link). Default: `main`'
         required: false
         default: 'main'
         type: string

@@ -8,27 +8,27 @@ on:
         required: true
         type: string
       cargo_toml_path:
-        description: 'Path to Cargo.toml (relative to repo root)'
+        description: 'Path to Cargo.toml (relative to repo root). Default: `Cargo.toml`'
         required: false
         default: 'Cargo.toml'
         type: string
       cargo_lock_path:
-        description: 'Path to Cargo.lock (relative to repo root). Set to empty string to skip committing the lockfile (e.g. for libraries that do not commit Cargo.lock).'
+        description: 'Path to Cargo.lock (relative to repo root). Set to empty string to skip committing the lockfile (e.g. for libraries that do not commit Cargo.lock). Default: `Cargo.lock`'
         required: false
         default: 'Cargo.lock'
         type: string
       changelog_path:
-        description: 'Path to CHANGELOG.md (relative to repo root)'
+        description: 'Path to CHANGELOG.md (relative to repo root). Default: `CHANGELOG.md`'
         required: false
         default: 'CHANGELOG.md'
         type: string
       commit_message:
-        description: 'Custom commit message for the release commit'
+        description: 'Custom commit message for the release commit. Default: `chore: release version`'
         required: false
         default: 'chore: release version'
         type: string
       target_branch:
-        description: 'Branch to push the release commit and tags to'
+        description: 'Branch to push the release commit and tags to. Default: `main`'
         required: false
         default: 'main'
         type: string
