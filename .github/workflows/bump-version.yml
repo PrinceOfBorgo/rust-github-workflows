@@ -1,0 +1,99 @@
+name: Reusable Workflow - Version Bump & Changelog
+
+on:
+  workflow_call:
+    inputs:
+      cargo_toml_path:
+        description: 'Path to Cargo.toml (relative to repo root)'
+        required: false
+        default: 'Cargo.toml'
+        type: string
+      cargo_lock_path:
+        description: 'Path to Cargo.lock (relative to repo root). Set to empty string to skip committing/uploading the lockfile (e.g. for libraries that do not commit Cargo.lock).'
+        required: false
+        default: 'Cargo.lock'
+        type: string
+      changelog_path:
+        description: 'Path to CHANGELOG.md (relative to repo root)'
+        required: false
+        default: 'CHANGELOG.md'
+        type: string
+      release_type:
+        description: 'Release type: major, minor, or patch'
+        required: true
+        type: string
+    outputs:
+      new_version:
+        description: 'The new version after bump'
+        value: ${{ jobs.bump_version.outputs.new_version }}
+      changelog_section_heading:
+        description: 'The section heading added to CHANGELOG'
+        value: ${{ jobs.bump_version.outputs.changelog_section_heading }}
+
+jobs:
+  bump_version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    outputs:
+      new_version: ${{ steps.bump_version.outputs.new_version }}
+      changelog_section_heading: ${{ steps.update_changelog.outputs.section_heading }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Set up Git user
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-edit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-edit
+
+      - name: Bump version
+        id: bump_version
+        run: |
+          cd "$(dirname "${{ inputs.cargo_toml_path }}")" || exit 1
+          cargo set-version --bump ${{ inputs.release_type }}
+          new_version=$(grep '^version = ' "${{ inputs.cargo_toml_path }}" | sed 's/version = "\(.*\)"/\1/')
+          echo "new_version=$new_version" >> "$GITHUB_OUTPUT"
+
+      - name: Update CHANGELOG.md
+        id: update_changelog
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          RELEASE_TYPE=""
+          
+          if [[ "${{ inputs.release_type }}" == "major" ]]; then
+            RELEASE_TYPE="### 💥 Major Release"
+          elif [[ "${{ inputs.release_type }}" == "minor" ]]; then
+            RELEASE_TYPE="### ✨ Minor Release"
+          else
+            RELEASE_TYPE="### 🔧 Patch Release"
+          fi
+          
+          SECTION_HEADING="[${{ steps.bump_version.outputs.new_version }}] - $DATE"
+          NEW_CONTENT="## ${SECTION_HEADING}\n$RELEASE_TYPE"
+          sed -i "0,/^## \[.*-SNAPSHOT\].*/s|^## \[.*-SNAPSHOT\].*|$NEW_CONTENT|" "${{ inputs.changelog_path }}"
+          
+          echo "section_heading=$SECTION_HEADING" >> "$GITHUB_OUTPUT"
+
+      - name: Upload updated files
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-files
+          path: |
+            ${{ inputs.cargo_toml_path }}
+            ${{ inputs.cargo_lock_path }}
+            ${{ inputs.changelog_path }}
+          if-no-files-found: ignore
+          retention-days: 1

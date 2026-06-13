@@ -1,0 +1,70 @@
+name: Reusable Workflow - Finalize Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'The version being released (without v prefix)'
+        required: true
+        type: string
+      cargo_toml_path:
+        description: 'Path to Cargo.toml (relative to repo root)'
+        required: false
+        default: 'Cargo.toml'
+        type: string
+      cargo_lock_path:
+        description: 'Path to Cargo.lock (relative to repo root). Set to empty string to skip committing the lockfile (e.g. for libraries that do not commit Cargo.lock).'
+        required: false
+        default: 'Cargo.lock'
+        type: string
+      changelog_path:
+        description: 'Path to CHANGELOG.md (relative to repo root)'
+        required: false
+        default: 'CHANGELOG.md'
+        type: string
+      commit_message:
+        description: 'Custom commit message for the release commit'
+        required: false
+        default: 'chore: release version'
+        type: string
+      target_branch:
+        description: 'Branch to push the release commit and tags to'
+        required: false
+        default: 'main'
+        type: string
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Download release files artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-files
+          path: .
+
+      - name: Set up Git user
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Commit and Tag Release
+        run: |
+          FILES_TO_ADD=("${{ inputs.cargo_toml_path }}" "${{ inputs.changelog_path }}")
+          if [[ -n "${{ inputs.cargo_lock_path }}" && -f "${{ inputs.cargo_lock_path }}" ]]; then
+            FILES_TO_ADD+=("${{ inputs.cargo_lock_path }}")
+          fi
+          git add "${FILES_TO_ADD[@]}"
+          git commit -m "${{ inputs.commit_message }} ${{ inputs.version }} [skip ci]"
+          git tag -a "v${{ inputs.version }}" -m "Release version ${{ inputs.version }}"
+
+      - name: Push changes and tags
+        run: git push origin "${{ inputs.target_branch }}" --tags

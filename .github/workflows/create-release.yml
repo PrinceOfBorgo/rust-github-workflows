@@ -1,0 +1,119 @@
+name: Reusable Workflow - Create GitHub Release
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'The version to release (without v prefix)'
+        required: true
+        type: string
+      changelog_section_heading:
+        description: 'The CHANGELOG section heading for this release'
+        required: true
+        type: string
+      changelog_path:
+        description: 'Path to CHANGELOG.md (relative to repo root)'
+        required: false
+        default: 'CHANGELOG.md'
+        type: string
+      release_assets:
+        description: 'JSON array of asset paths to attach to the release'
+        required: false
+        default: '[]'
+        type: string
+      generate_release_notes:
+        description: 'Whether to auto-generate release notes from commits'
+        required: false
+        default: 'true'
+        type: string
+      target_branch:
+        description: 'Branch the release tag points to (used for auto-generated notes and the CHANGELOG link)'
+        required: false
+        default: 'main'
+        type: string
+
+jobs:
+  create_release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: generate_notes
+        if: inputs.generate_release_notes == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SECTION_HEADING="${{ inputs.changelog_section_heading }}"
+          FULL_REPO_NAME="${{ github.repository }}"
+
+          # 1. Generate release notes using GitHub API endpoint
+          GENERATED_NOTES_JSON=$(gh api \
+            --raw-field tag_name="v${{ inputs.version }}" \
+            --raw-field target_commitish="${{ inputs.target_branch }}" \
+            /repos/${FULL_REPO_NAME}/releases/generate-notes)
+          
+          # Extract the 'body' field from the JSON response using jq
+          AUTO_GENERATED_NOTES=$(echo "$GENERATED_NOTES_JSON" | jq -r '.body')
+
+          # Generate CHANGELOG link with proper section ID
+          # Apply GitHub's heading ID rules (based on official docs):
+          # https://docs.github.com/en/get-started/writing-on-github/getting-started-with-writing-and-formatting-on-github/basic-writing-and-formatting-syntax#section-links
+          
+          # 1. Lowercase conversion
+          SECTION_ID=$(echo "$SECTION_HEADING" | tr '[:upper:]' '[:lower:]')
+          # 2. Remove leading/trailing whitespaces
+          SECTION_ID=$(echo "$SECTION_ID" | sed 's/^ *//;s/ *$//g')
+          # 3. Replace whitespaces with hyphens
+          SECTION_ID=$(echo "$SECTION_ID" | sed 's/ /-/g')
+          # 4. Remove other punctuation/special characters (dots, brackets, etc.)
+          SECTION_ID=$(echo "$SECTION_ID" | sed 's/[^a-z0-9-]\+//g')
+
+          # Construct the full link to the CHANGELOG.md section
+          CHANGELOG_LINK="https://github.com/${FULL_REPO_NAME}/blob/${{ inputs.target_branch }}/${{ inputs.changelog_path }}#${SECTION_ID}"
+          
+          echo "Generated CHANGELOG link: ${CHANGELOG_LINK}"
+
+          # Combine custom link and auto-generated notes
+          FINAL_NOTES_CONTENT="See the full [CHANGELOG](${CHANGELOG_LINK}) for details.\n\n${AUTO_GENERATED_NOTES}"
+          
+          # Write the final notes content to a file
+          echo -e "$FINAL_NOTES_CONTENT" > RELEASE_NOTES.md
+
+          echo "release_notes_file=RELEASE_NOTES.md" >> "$GITHUB_OUTPUT"
+
+      - name: Download release assets
+        if: inputs.release_assets != '[]'
+        uses: actions/download-artifact@v4
+        with:
+          path: ./release-assets
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NOTES_ARG=""
+          if [[ -f RELEASE_NOTES.md ]]; then
+            NOTES_ARG="--notes-file RELEASE_NOTES.md"
+          fi
+
+          ASSETS_ARG=""
+          ASSETS_JSON='${{ inputs.release_assets }}'
+          if [[ "$ASSETS_JSON" != "[]" && "$ASSETS_JSON" != "" ]]; then
+            for asset in $(echo "$ASSETS_JSON" | jq -r '.[]'); do
+              if [[ -f "$asset" ]]; then
+                ASSETS_ARG="$ASSETS_ARG $asset"
+              fi
+            done
+          fi
+
+          gh release create "v${{ inputs.version }}" \
+            --title "Release v${{ inputs.version }}" \
+            $NOTES_ARG \
+            $ASSETS_ARG
