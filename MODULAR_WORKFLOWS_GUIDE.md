@@ -6,7 +6,7 @@ This guide explains how to use the reusable GitHub Actions workflows for managin
 
 - The consumer repository is a Rust/Cargo project (single crate or workspace).
 - A `Cargo.toml` exists at the path passed via `cargo_toml_path` (default `Cargo.toml`).
-- A `CHANGELOG.md` exists with an unreleased placeholder line such as `## [X.Y.Z-SNAPSHOT]` that the bump workflow rewrites into the new version section.
+- A `CHANGELOG.md` exists with an unreleased placeholder line such as `## [X.Y.Z-SNAPSHOT]` that the bump workflow rewrites into the new version section. See [`CHANGELOG.template.md`](CHANGELOG.template.md) for a ready-to-copy scaffold.
 - The repository default branch is `main`, or `target_branch` is set to the branch the release should be pushed to.
 
 ## Architecture Overview
@@ -73,6 +73,28 @@ Creates a GitHub release with auto-generated notes and optional asset attachment
     version: ${{ needs.prepare.outputs.new_version }}
     changelog_section_heading: ${{ needs.prepare.outputs.changelog_section_heading }}
     release_assets: '["path/to/asset.zip"]'
+```
+
+---
+
+### 4. **open-next-snapshot.yml**
+Automatically opens the next development iteration after a release by bumping the Cargo version to `X.Y.(Z+1)-SNAPSHOT` and prepending a new snapshot section to the CHANGELOG.
+
+**Inputs:**
+- `cargo_toml_path` (optional, default: `Cargo.toml`) - Path to your Cargo.toml file
+- `cargo_lock_path` (optional, default: `Cargo.lock`) - Path to Cargo.lock. Set to empty string (`''`) to skip (e.g. libraries).
+- `changelog_path` (optional, default: `CHANGELOG.md`) - Path to your CHANGELOG file
+- `commit_message` (optional, default: `chore: prepare for next development iteration`) - Commit message
+- `target_branch` (optional, default: `main`) - Branch to push snapshot commit to
+
+**Outputs:**
+- `next_version` - The new snapshot version that was set
+
+**Usage:**
+```yaml
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1.0.0
+with:
+  # Optional: can customize paths and branch if needed
 ```
 
 ---

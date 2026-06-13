@@ -5,7 +5,7 @@ Reusable GitHub Actions workflows for automating releases of **Rust projects** a
 ## Requirements
 
 - A Rust project with a `Cargo.toml` (workspaces and non-root paths are supported via `cargo_toml_path`).
-- A `CHANGELOG.md` containing an unreleased placeholder line of the form `## [X.Y.Z-SNAPSHOT]` that the bump workflow will replace with the new version section.
+- A `CHANGELOG.md` containing an unreleased placeholder line of the form `## [X.Y.Z-SNAPSHOT]` that the bump workflow will replace with the new version section. Copy [`CHANGELOG.template.md`](CHANGELOG.template.md) into your repo as `CHANGELOG.md` to start from a ready-made scaffold.
 - A repository default branch named `main` (overridable per call via the `target_branch` input on `finalize-release.yml` and `create-release.yml`).
 - If your project commits a `Cargo.lock`, point `cargo_lock_path` at it (defaults to `Cargo.lock` at the repo root). Libraries that don't commit a lockfile should pass `cargo_lock_path: ''`.
 
@@ -14,10 +14,12 @@ Reusable GitHub Actions workflows for automating releases of **Rust projects** a
 - `.github/workflows/bump-version.yml`
 - `.github/workflows/finalize-release.yml`
 - `.github/workflows/create-release.yml`
+- `.github/workflows/open-next-snapshot.yml`
 - `MODULAR_WORKFLOWS_GUIDE.md`
 - `TEMPLATES_RELEASE_WORKFLOWS.md`
+- `CHANGELOG.template.md`
 
-Use `MODULAR_WORKFLOWS_GUIDE.md` as the primary documentation and `TEMPLATES_RELEASE_WORKFLOWS.md` for copy-paste examples.
+Use `MODULAR_WORKFLOWS_GUIDE.md` as the primary documentation, `TEMPLATES_RELEASE_WORKFLOWS.md` for copy-paste workflow examples, and `CHANGELOG.template.md` as the starting point for your project's `CHANGELOG.md`.
 
 ## Quick Start
 
@@ -25,6 +27,7 @@ Use `MODULAR_WORKFLOWS_GUIDE.md` as the primary documentation and `TEMPLATES_REL
 2. Call the reusable bump workflow.
 3. Run your project-specific build jobs.
 4. Call finalize and create-release reusable workflows.
+5. Call open-next-snapshot to automatically prepare the next development iteration.
 
 Example:
 
@@ -76,6 +79,12 @@ jobs:
       changelog_section_heading: ${{ needs.prepare_release_data.outputs.changelog_section_heading }}
     permissions:
       contents: write
+
+  open_next:
+    needs: [finalize_release, create_github_release]
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1.0.0
+    permissions:
+      contents: write
 ```
 
 ## Versioning Policy
@@ -87,3 +96,4 @@ jobs:
 
 - `MODULAR_WORKFLOWS_GUIDE.md`: architecture, behavior, and integration flow
 - `TEMPLATES_RELEASE_WORKFLOWS.md`: ready-to-copy templates for common project types
+- `CHANGELOG.template.md`: drop-in `CHANGELOG.md` scaffold with the `## [X.Y.Z-SNAPSHOT]` placeholder the bump workflow expects

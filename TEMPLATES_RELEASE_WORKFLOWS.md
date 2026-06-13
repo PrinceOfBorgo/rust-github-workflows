@@ -5,7 +5,7 @@ This file provides copy-paste templates for common Rust project layouts.
 > **Prerequisites for every template**
 >
 > - Cargo-based project (`Cargo.toml` at the configured `cargo_toml_path`)
-> - `CHANGELOG.md` with an unreleased placeholder line of the form `## [X.Y.Z-SNAPSHOT]`
+> - `CHANGELOG.md` with an unreleased placeholder line of the form `## [X.Y.Z-SNAPSHOT]` (copy [`CHANGELOG.template.md`](CHANGELOG.template.md) as a starting point)
 > - Default branch is `main` (or pass `target_branch:` to `finalize-release.yml` and `create-release.yml`)
 > - `Cargo.lock` defaults to the repo root. Override with `cargo_lock_path` for non-standard layouts, or pass `cargo_lock_path: ''` for libraries that don't commit a lockfile.
 > - Examples below pin to `@v1.0.0`; bump the tag (e.g. `@v1.1.0`) to adopt newer workflow versions
@@ -62,6 +62,12 @@ jobs:
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_version.outputs.changelog_section_heading }}
+    permissions:
+      contents: write
+
+  open_next:
+    needs: [finalize, create_release]
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1.0.0
     permissions:
       contents: write
 ```
@@ -123,6 +129,15 @@ jobs:
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_version.outputs.changelog_section_heading }}
+      changelog_path: ${{ env.MAIN_CRATE_DIR }}/CHANGELOG.md
+    permissions:
+      contents: write
+
+  open_next:
+    needs: [finalize, create_release]
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1.0.0
+    with:
+      cargo_toml_path: ${{ env.MAIN_CRATE_DIR }}/Cargo.toml
       changelog_path: ${{ env.MAIN_CRATE_DIR }}/CHANGELOG.md
     permissions:
       contents: write
@@ -203,6 +218,12 @@ jobs:
       release_assets: ${{ format('["{0}"]', needs.build.outputs.artifact_path) }}
     permissions:
       contents: write
+
+  open_next:
+    needs: [finalize, create_release]
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1.0.0
+    permissions:
+      contents: write
 ```
 
 ---
@@ -248,13 +269,36 @@ validate:
 ```
 Then add `validate` to the `needs:` list of the `finalize` job.
 
+### Customize Auto-Snapshot Opening (or Disable It)
+
+All templates include an optional `open_next` job that automatically bumps the version to the next snapshot
+and prepends a new changelog section. This prepares the repository for the next development cycle immediately
+after release.
+
+**To disable automatic snapshot opening:**
+Remove the `open_next` job from the template. You'll then manually add a fresh `## [X.Y.Z-SNAPSHOT]`
+line to `CHANGELOG.md` before the next release can be prepared.
+
+**To customize the paths for workspaces:**
+Update the `open_next` job's `with:` section (similar to how other jobs are configured):
+```yaml
+open_next:
+  needs: [finalize, create_release]
+  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1.0.0
+  with:
+    cargo_toml_path: crates/my-crate/Cargo.toml
+    changelog_path: crates/my-crate/CHANGELOG.md
+  permissions:
+    contents: write
+```
+
 ---
 
 ## Getting Started
 
 1. **Choose your template** based on your Rust project layout (single crate, workspace, or with build artifacts)
 2. **Copy it to `.github/workflows/release.yml`** in your repo
-3. **Ensure `CHANGELOG.md` has a `## [X.Y.Z-SNAPSHOT]` placeholder** that the bump workflow can rewrite
+3. **Ensure `CHANGELOG.md` has a `## [X.Y.Z-SNAPSHOT]` placeholder** that the bump workflow can rewrite (copy [`CHANGELOG.template.md`](CHANGELOG.template.md) as `CHANGELOG.md` to get a ready-made scaffold)
 4. **Adjust `cargo_toml_path` / `changelog_path`** if your crate is not at the repo root
 5. **Test with a `[release:patch]` commit to `main`**
 6. **Stay on a pinned tag** (e.g. `@v1.0.0`) and bump it deliberately when newer workflow versions are released

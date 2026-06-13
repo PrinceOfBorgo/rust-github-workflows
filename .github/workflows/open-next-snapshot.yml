@@ -1,0 +1,93 @@
+name: Reusable Workflow - Open Next Snapshot
+
+on:
+  workflow_call:
+    inputs:
+      cargo_toml_path:
+        description: 'Path to Cargo.toml (relative to repo root)'
+        required: false
+        default: 'Cargo.toml'
+        type: string
+      cargo_lock_path:
+        description: 'Path to Cargo.lock (relative to repo root). Set to empty string to skip committing the lockfile (e.g. for libraries that do not commit Cargo.lock).'
+        required: false
+        default: 'Cargo.lock'
+        type: string
+      changelog_path:
+        description: 'Path to CHANGELOG.md (relative to repo root)'
+        required: false
+        default: 'CHANGELOG.md'
+        type: string
+      commit_message:
+        description: 'Commit message for the snapshot bump (the "[skip ci]" tag is appended automatically)'
+        required: false
+        default: 'chore: prepare for next development iteration'
+        type: string
+      target_branch:
+        description: 'Branch to push the snapshot commit to'
+        required: false
+        default: 'main'
+        type: string
+    outputs:
+      next_version:
+        description: 'The new snapshot version that was set'
+        value: ${{ jobs.open_next_snapshot.outputs.next_version }}
+
+jobs:
+  open_next_snapshot:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    outputs:
+      next_version: ${{ steps.bump.outputs.next_version }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+
+      - name: Set up Git user
+        run: |
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-edit
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-edit
+
+      - name: Bump to next snapshot version
+        id: bump
+        run: |
+          CURRENT_VERSION=$(grep '^version = ' "${{ inputs.cargo_toml_path }}" | sed 's/version = "\(.*\)"/\1/')
+          IFS='.' read -r major minor patch <<< "${CURRENT_VERSION}"
+
+          next_version="${major}.${minor}.$((patch + 1))-SNAPSHOT"
+
+          cd "$(dirname "${{ inputs.cargo_toml_path }}")" || exit 1
+          cargo set-version "${next_version}"
+          cd - >/dev/null
+
+          echo "next_version=${next_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepend new snapshot section to CHANGELOG
+        run: |
+          NEXT_VERSION="${{ steps.bump.outputs.next_version }}"
+          NEW_SNAPSHOT="## [${NEXT_VERSION}] - Unreleased\n### Added\n- N/A\n\n### Changed\n- N/A\n\n### Fixed\n- N/A"
+          sed -i "1s|^# Changelog|# Changelog\n\n${NEW_SNAPSHOT}|" "${{ inputs.changelog_path }}"
+
+      - name: Commit and push
+        run: |
+          FILES_TO_ADD=("${{ inputs.cargo_toml_path }}" "${{ inputs.changelog_path }}")
+          if [[ -n "${{ inputs.cargo_lock_path }}" && -f "${{ inputs.cargo_lock_path }}" ]]; then
+            FILES_TO_ADD+=("${{ inputs.cargo_lock_path }}")
+          fi
+          git add "${FILES_TO_ADD[@]}"
+          git commit -m "${{ inputs.commit_message }} [skip ci]"
+          git push origin "${{ inputs.target_branch }}"
