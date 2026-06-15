@@ -1,5 +1,10 @@
 name: Reusable Workflow - Open Next Snapshot
 
+# Prepares the repository for the next development iteration: bumps the
+# Cargo version to `X.Y.(Z+1)-SNAPSHOT`, prepends a fresh
+# `## [X.Y.Z-SNAPSHOT] - Unreleased` section to `CHANGELOG.md`, and
+# commits/pushes the change to the target branch.
+
 on:
   workflow_call:
     inputs:

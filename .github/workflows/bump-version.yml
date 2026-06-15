@@ -1,5 +1,11 @@
 name: Reusable Workflow - Version Bump & Changelog
 
+# Bumps the Cargo crate version (`major`, `minor`, or `patch`) using
+# `cargo set-version`, rewrites the `## [X.Y.Z-SNAPSHOT]` line in
+# `CHANGELOG.md` with the new version and date, and uploads the modified
+# files as the `release-files` artifact for `finalize-release.yml` to
+# consume.
+
 on:
   workflow_call:
     inputs:

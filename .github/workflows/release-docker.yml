@@ -1,0 +1,233 @@
+name: Reusable Workflow - Release with Docker (Bump → Docker → Finalize → Create → Open Next Snapshot → Rollback on Failure)
+
+# Orchestrator that chains the full release pipeline for projects that ship
+# a Docker image alongside the GitHub release:
+#   bump-version → docker-build-push → finalize-release → create-release → open-next-snapshot → rollback-release (on failure)
+#
+# The Docker image is tagged with `:v<new_version>` (and `:latest` when
+# `push_latest=true`) and pushed to the configured registry before the
+# release is finalized, so a failed image push aborts the release before
+# any tag/commit is pushed.
+
+on:
+  workflow_call:
+    inputs:
+      cargo_toml_path:
+        description: 'Path to Cargo.toml (relative to repo root). Default: `Cargo.toml`'
+        required: false
+        default: 'Cargo.toml'
+        type: string
+      cargo_lock_path:
+        description: 'Path to Cargo.lock (relative to repo root). Set to empty string to skip committing/uploading the lockfile (e.g. for libraries that do not commit Cargo.lock). Default: `Cargo.lock`'
+        required: false
+        default: 'Cargo.lock'
+        type: string
+      changelog_path:
+        description: 'Path to CHANGELOG.md (relative to repo root). Default: `CHANGELOG.md`'
+        required: false
+        default: 'CHANGELOG.md'
+        type: string
+      target_branch:
+        description: 'Branch to push the release commit and tags to. Default: `main`'
+        required: false
+        default: 'main'
+        type: string
+      release_assets:
+        description: 'JSON array of asset paths to attach to the GitHub release. Default: `[]`'
+        required: false
+        default: '[]'
+        type: string
+      image_name:
+        description: 'Docker image name without registry (e.g. `org/app`). Default: lowercased value of github.repository'
+        required: false
+        default: ''
+        type: string
+      container_package_name:
+        description: 'Container package name used by the rollback step when deleting the failed image version (typically the trailing component of `image_name`). Default: github.event.repository.name'
+        required: false
+        default: ''
+        type: string
+      registry:
+        description: 'Container registry to push to. Default: `ghcr.io`'
+        required: false
+        default: 'ghcr.io'
+        type: string
+      registry_username:
+        description: 'Username used to authenticate against the registry. Default: github.actor'
+        required: false
+        default: ''
+        type: string
+      dockerfile:
+        description: 'Path to the Dockerfile (relative to repo root). Default: `Dockerfile`'
+        required: false
+        default: 'Dockerfile'
+        type: string
+      context:
+        description: 'Docker build context. Default: `.`'
+        required: false
+        default: '.'
+        type: string
+      platforms:
+        description: 'Comma-separated list of Docker platforms (e.g. `linux/amd64,linux/arm64,linux/arm/v7`). Default: `linux/amd64`'
+        required: false
+        default: 'linux/amd64'
+        type: string
+      push_latest:
+        description: 'Whether to also tag the image as `:latest`. Default: `true`'
+        required: false
+        default: 'true'
+        type: string
+      extra_tags:
+        description: 'Additional fully-qualified tags (one per line) to push alongside the default ones. Default: empty'
+        required: false
+        default: ''
+        type: string
+      build_args:
+        description: 'Newline-separated build args passed to docker/build-push-action (`KEY=value` per line). Default: empty'
+        required: false
+        default: ''
+        type: string
+      cargo_zigbuild:
+        description: 'When `true`, cross-compile Rust binaries with cargo-zigbuild before running the Docker build. Default: `false`'
+        required: false
+        default: 'false'
+        type: string
+      rust_targets:
+        description: 'Newline- or whitespace-separated Rust targets to build (only used when `cargo_zigbuild=true`). Default: `x86_64-unknown-linux-musl`'
+        required: false
+        default: 'x86_64-unknown-linux-musl'
+        type: string
+      cargo_build_args:
+        description: 'Extra arguments appended to each `cargo zigbuild --release --target <t>` invocation. Default: empty'
+        required: false
+        default: ''
+        type: string
+      zig_version:
+        description: 'Zig version to install (only used when `cargo_zigbuild=true`). Default: `0.13.0`'
+        required: false
+        default: '0.13.0'
+        type: string
+    secrets:
+      registry_password:
+        description: 'Password/token used to authenticate against the registry. Defaults to `secrets.GITHUB_TOKEN` when not provided.'
+        required: false
+    outputs:
+      new_version:
+        description: 'The version that was released'
+        value: ${{ jobs.bump.outputs.new_version }}
+      changelog_section_heading:
+        description: 'The CHANGELOG section heading added for this release'
+        value: ${{ jobs.bump.outputs.changelog_section_heading }}
+      next_version:
+        description: 'The next snapshot version'
+        value: ${{ jobs.next_snapshot.outputs.next_version }}
+      image:
+        description: 'The fully-qualified image (registry/name) that was pushed'
+        value: ${{ jobs.docker.outputs.image }}
+      tags:
+        description: 'Newline-separated list of Docker tags that were pushed'
+        value: ${{ jobs.docker.outputs.tags }}
+
+jobs:
+  determine_type:
+    runs-on: ubuntu-latest
+    outputs:
+      release_type: ${{ steps.determine.outputs.type }}
+    steps:
+      - name: Determine release type
+        id: determine
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          if [[ "$COMMIT_MSG" == *"[release:major]"* ]]; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif [[ "$COMMIT_MSG" == *"[release:minor]"* ]]; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+  bump:
+    needs: determine_type
+    uses: ./.github/workflows/bump-version.yml
+    with:
+      release_type: ${{ needs.determine_type.outputs.release_type }}
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      cargo_lock_path: ${{ inputs.cargo_lock_path }}
+      changelog_path: ${{ inputs.changelog_path }}
+    permissions:
+      contents: write
+
+  docker:
+    needs: bump
+    uses: ./.github/workflows/docker-build-push.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      image_name: ${{ inputs.image_name }}
+      registry: ${{ inputs.registry }}
+      registry_username: ${{ inputs.registry_username }}
+      dockerfile: ${{ inputs.dockerfile }}
+      context: ${{ inputs.context }}
+      platforms: ${{ inputs.platforms }}
+      push_latest: ${{ inputs.push_latest }}
+      extra_tags: ${{ inputs.extra_tags }}
+      build_args: ${{ inputs.build_args }}
+      cargo_zigbuild: ${{ inputs.cargo_zigbuild }}
+      rust_targets: ${{ inputs.rust_targets }}
+      cargo_build_args: ${{ inputs.cargo_build_args }}
+      zig_version: ${{ inputs.zig_version }}
+    secrets:
+      registry_password: ${{ secrets.registry_password }}
+    permissions:
+      contents: read
+      packages: write
+
+  finalize:
+    needs: [bump, docker]
+    uses: ./.github/workflows/finalize-release.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      cargo_lock_path: ${{ inputs.cargo_lock_path }}
+      changelog_path: ${{ inputs.changelog_path }}
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+
+  create:
+    needs: [bump, finalize]
+    uses: ./.github/workflows/create-release.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      changelog_section_heading: ${{ needs.bump.outputs.changelog_section_heading }}
+      changelog_path: ${{ inputs.changelog_path }}
+      release_assets: ${{ inputs.release_assets }}
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+
+  next_snapshot:
+    needs: create
+    uses: ./.github/workflows/open-next-snapshot.yml
+    with:
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      cargo_lock_path: ${{ inputs.cargo_lock_path }}
+      changelog_path: ${{ inputs.changelog_path }}
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+
+  rollback:
+    if: failure() && needs.bump.outputs.new_version != ''
+    needs: [bump, docker, finalize, create, next_snapshot]
+    uses: ./.github/workflows/rollback-release.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      delete_github_release: 'true'
+      delete_container_image: 'true'
+      container_package_name: ${{ inputs.container_package_name }}
+      registry: ${{ inputs.registry }}
+      delete_tag: 'true'
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+      packages: write

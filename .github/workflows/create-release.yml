@@ -1,5 +1,10 @@
 name: Reusable Workflow - Create GitHub Release
 
+# Creates a GitHub release for `vX.Y.Z`. Optionally auto-generates release
+# notes from commit history (prefixed with a link to the matching
+# `CHANGELOG.md` section) and attaches assets downloaded from previously
+# uploaded workflow artifacts.
+
 on:
   workflow_call:
     inputs:

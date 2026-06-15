@@ -1,0 +1,207 @@
+name: Reusable Workflow - Docker Build & Push
+
+# Builds a (multi-arch) Docker image and pushes it to a container registry.
+#
+# Two modes:
+# - Plain Docker build (default): just runs docker/build-push-action against
+#   the provided Dockerfile / context / platforms.
+# - Rust cross-compile (cargo_zigbuild=true): installs the Rust toolchain
+#   plus zig and cargo-zigbuild, builds the requested targets, then runs the
+#   Docker build (handy when the Dockerfile copies pre-built binaries via
+#   build-args, e.g. BIN_PATH_AMD64=target/x86_64-unknown-linux-musl/release/<bin>).
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version tag for the image (without the `v` prefix). When set, the image is pushed as `<image>:v<version>`. Default: empty (only `:latest` and `extra_tags` are pushed)'
+        required: false
+        default: ''
+        type: string
+      image_name:
+        description: 'Image name without registry (e.g. `org/app`). Default: lowercased value of github.repository'
+        required: false
+        default: ''
+        type: string
+      registry:
+        description: 'Container registry to push to. Default: `ghcr.io`'
+        required: false
+        default: 'ghcr.io'
+        type: string
+      registry_username:
+        description: 'Username used to authenticate against the registry. Default: github.actor'
+        required: false
+        default: ''
+        type: string
+      dockerfile:
+        description: 'Path to the Dockerfile (relative to repo root). Default: `Dockerfile`'
+        required: false
+        default: 'Dockerfile'
+        type: string
+      context:
+        description: 'Build context passed to docker/build-push-action. Default: `.`'
+        required: false
+        default: '.'
+        type: string
+      platforms:
+        description: 'Comma-separated list of Docker platforms (e.g. `linux/amd64,linux/arm64,linux/arm/v7`). Default: `linux/amd64`'
+        required: false
+        default: 'linux/amd64'
+        type: string
+      push_latest:
+        description: 'Whether to also tag the image as `:latest`. Default: `true`'
+        required: false
+        default: 'true'
+        type: string
+      extra_tags:
+        description: 'Additional fully-qualified tags (one per line) to push alongside the default ones. Default: empty'
+        required: false
+        default: ''
+        type: string
+      build_args:
+        description: 'Newline-separated build args passed to docker/build-push-action (`KEY=value` per line). Default: empty'
+        required: false
+        default: ''
+        type: string
+      cargo_zigbuild:
+        description: 'When `true`, cross-compile Rust binaries with cargo-zigbuild before running the Docker build. Default: `false`'
+        required: false
+        default: 'false'
+        type: string
+      rust_targets:
+        description: 'Newline- or whitespace-separated Rust targets to build (only used when `cargo_zigbuild=true`). Default: `x86_64-unknown-linux-musl`'
+        required: false
+        default: 'x86_64-unknown-linux-musl'
+        type: string
+      cargo_build_args:
+        description: 'Extra arguments appended to each `cargo zigbuild --release --target <t>` invocation. Default: empty'
+        required: false
+        default: ''
+        type: string
+      zig_version:
+        description: 'Zig version to install (only used when `cargo_zigbuild=true`). Default: `0.13.0`'
+        required: false
+        default: '0.13.0'
+        type: string
+    secrets:
+      registry_password:
+        description: 'Password/token used to authenticate against the registry. Defaults to `secrets.GITHUB_TOKEN` when not provided.'
+        required: false
+    outputs:
+      image:
+        description: 'The fully-qualified image (registry/name) that was pushed'
+        value: ${{ jobs.build_and_push.outputs.image }}
+      tags:
+        description: 'Newline-separated list of tags that were pushed'
+        value: ${{ jobs.build_and_push.outputs.tags }}
+
+jobs:
+  build_and_push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.full_image }}
+      tags: ${{ steps.tags.outputs.tags }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Resolve image name
+        id: image
+        run: |
+          IMAGE_NAME="${{ inputs.image_name }}"
+          if [[ -z "$IMAGE_NAME" ]]; then
+            IMAGE_NAME="${GITHUB_REPOSITORY,,}"
+          fi
+          FULL_IMAGE="${{ inputs.registry }}/${IMAGE_NAME}"
+          echo "image_name=${IMAGE_NAME}" >> "$GITHUB_OUTPUT"
+          echo "full_image=${FULL_IMAGE}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        if: inputs.cargo_zigbuild == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ inputs.rust_targets }}
+
+      - name: Setup Zig
+        if: inputs.cargo_zigbuild == 'true'
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: ${{ inputs.zig_version }}
+
+      - name: Install cargo-zigbuild
+        if: inputs.cargo_zigbuild == 'true'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Cross-compile Rust binaries
+        if: inputs.cargo_zigbuild == 'true'
+        run: |
+          # rust_targets can be space- or newline-separated.
+          TARGETS=$(echo "${{ inputs.rust_targets }}" | tr '\n' ' ')
+          EXTRA_ARGS="${{ inputs.cargo_build_args }}"
+          for target in $TARGETS; do
+            [[ -z "$target" ]] && continue
+            echo "::group::cargo zigbuild --release --target $target $EXTRA_ARGS"
+            cargo zigbuild --release --target "$target" $EXTRA_ARGS
+            echo "::endgroup::"
+          done
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve registry username
+        id: registry_user
+        run: |
+          USER="${{ inputs.registry_username }}"
+          if [[ -z "$USER" ]]; then
+            USER="${{ github.actor }}"
+          fi
+          echo "username=${USER}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ steps.registry_user.outputs.username }}
+          password: ${{ secrets.registry_password != '' && secrets.registry_password || secrets.GITHUB_TOKEN }}
+
+      - name: Compose tags
+        id: tags
+        run: |
+          FULL_IMAGE="${{ steps.image.outputs.full_image }}"
+          TAGS=""
+          if [[ -n "${{ inputs.version }}" ]]; then
+            TAGS+="${FULL_IMAGE}:v${{ inputs.version }}"$'\n'
+          fi
+          if [[ "${{ inputs.push_latest }}" == "true" ]]; then
+            TAGS+="${FULL_IMAGE}:latest"$'\n'
+          fi
+          if [[ -n "${{ inputs.extra_tags }}" ]]; then
+            TAGS+="${{ inputs.extra_tags }}"$'\n'
+          fi
+          # Drop empty lines.
+          TAGS=$(printf '%s' "$TAGS" | sed '/^[[:space:]]*$/d')
+          if [[ -z "$TAGS" ]]; then
+            echo "::error::No tags resolved. Set `version`, enable `push_latest`, or provide `extra_tags`."
+            exit 1
+          fi
+          {
+            echo "tags<<EOF"
+            echo "$TAGS"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          build-args: ${{ inputs.build_args }}

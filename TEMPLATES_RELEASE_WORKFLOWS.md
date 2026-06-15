@@ -9,6 +9,7 @@ This file provides copy-paste templates for common Rust project layouts.
 > - Default branch is `main` (or pass `target_branch:` to `finalize-release.yml` and `create-release.yml`)
 > - `Cargo.lock` defaults to the repo root. Override with `cargo_lock_path` for non-standard layouts, or pass `cargo_lock_path: ''` for libraries that don't commit a lockfile.
 > - Examples below pin to `@v1.0.0`; bump the tag (e.g. `@v1.1.0`) to adopt newer workflow versions
+> - Templates 1-3 use the **granular** workflows so you can add custom build steps. Templates 4-5 use the **orchestrators** (`release.yml`, `release-docker.yml`) when the standard pipeline is enough.
 
 ---
 
@@ -228,6 +229,110 @@ jobs:
 
 ---
 
+## Template 4: Plain Release via Orchestrator (`release.yml`)
+
+Minimal `bump → finalize → create → open-next-snapshot` pipeline for projects that don't ship extra build artifacts. The release type is inferred from the head commit message:
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  release:
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1.0.0
+    permissions:
+      contents: write
+```
+
+For a workspace, pass the per-crate paths through:
+
+```yaml
+  release:
+    # ...
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1.0.0
+    with:
+      cargo_toml_path: crates/my-crate/Cargo.toml
+      changelog_path: crates/my-crate/CHANGELOG.md
+    permissions:
+      contents: write
+```
+
+---
+
+## Template 5: Release with Docker Image via Orchestrator (`release-docker.yml`)
+
+For a Rust service that publishes a Docker image to GHCR alongside the GitHub release. The orchestrator runs `bump → docker-build-push → finalize → create → open-next-snapshot`, so a failed image push aborts the release before any tag is pushed.
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  release:
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1.0.0
+    with:
+      platforms: linux/amd64,linux/arm64
+    permissions:
+      contents: write
+      packages: write
+```
+
+If your `Dockerfile` consumes pre-built binaries built with `cargo-zigbuild` (the `travel-rs-bot` pattern), enable the cross-compile mode:
+
+```yaml
+  release:
+    # ...
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1.0.0
+    with:
+      platforms: linux/amd64,linux/arm64,linux/arm/v7
+      cargo_zigbuild: 'true'
+      rust_targets: |
+        x86_64-unknown-linux-musl
+        aarch64-unknown-linux-musl
+        armv7-unknown-linux-musleabihf
+      build_args: |
+        BIN_PATH_AMD64=target/x86_64-unknown-linux-musl/release/my-app
+        BIN_PATH_ARM64=target/aarch64-unknown-linux-musl/release/my-app
+        BIN_PATH_ARMV7=target/armv7-unknown-linux-musleabihf/release/my-app
+    permissions:
+      contents: write
+      packages: write
+```
+
+Pushing to a non-GHCR registry? Pass `registry`, `registry_username`, and the `registry_password` secret:
+
+```yaml
+  release:
+    # ...
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1.0.0
+    with:
+      registry: docker.io
+      image_name: myorg/my-app
+      registry_username: ${{ vars.DOCKER_HUB_USER }}
+    secrets:
+      registry_password: ${{ secrets.DOCKER_HUB_TOKEN }}
+    permissions:
+      contents: write
+```
+
+---
+
 ## Customization Points
 
 ### Modify Commit Detection
@@ -292,11 +397,80 @@ open_next:
     contents: write
 ```
 
+### Add Rollback on Failure (Granular Templates)
+
+The orchestrator workflows (Templates 4 and 5) already wire a rollback job with `if: failure()`. If you're composing the **granular** workflows yourself (Templates 1-3), you can opt into the same behavior by appending a rollback job that depends on every other release job:
+
+```yaml
+  rollback:
+    if: failure() && needs.bump_version.outputs.new_version != ''
+    needs: [bump_version, finalize, create_release]
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1.0.0
+    with:
+      version: ${{ needs.bump_version.outputs.new_version }}
+      delete_github_release: 'true'
+      delete_tag: 'true'
+    permissions:
+      contents: write
+      packages: write
+```
+
+For a Docker-publishing pipeline, also pass `delete_container_image: 'true'` (and `container_package_name` when your image name doesn't match the repository name):
+
+```yaml
+  rollback:
+    if: failure() && needs.bump_version.outputs.new_version != ''
+    needs: [bump_version, build_and_push_docker, finalize, create_release]
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1.0.0
+    with:
+      version: ${{ needs.bump_version.outputs.new_version }}
+      delete_github_release: 'true'
+      delete_container_image: 'true'
+      delete_tag: 'true'
+    permissions:
+      contents: write
+      packages: write
+```
+
+### Manual Rollback via `workflow_dispatch`
+
+Add a stand-alone workflow that lets you trigger `rollback-release.yml` from the **Actions** tab to clean up after a partial release that wasn't auto-rolled-back:
+
+```yaml
+name: Rollback Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to roll back (without v prefix)'
+        required: true
+        type: string
+      delete_container_image:
+        description: 'Also delete the matching container image version'
+        required: false
+        default: 'false'
+        type: choice
+        options: ['true', 'false']
+
+jobs:
+  rollback:
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1.0.0
+    with:
+      version: ${{ inputs.version }}
+      delete_container_image: ${{ inputs.delete_container_image }}
+    permissions:
+      contents: write
+      packages: write
+```
+
 ---
 
 ## Getting Started
 
-1. **Choose your template** based on your Rust project layout (single crate, workspace, or with build artifacts)
+1. **Choose your template**:
+   - **Templates 1-3** (granular workflows) when your release pipeline needs custom steps between bump and finalize.
+   - **Templates 4-5** (orchestrators) when the standard pipeline (with optional Docker push) is enough.
 2. **Copy it to `.github/workflows/release.yml`** in your repo
 3. **Ensure `CHANGELOG.md` has a `## [X.Y.Z-SNAPSHOT]` placeholder** that the bump workflow can rewrite (copy [`CHANGELOG.template.md`](CHANGELOG.template.md) as `CHANGELOG.md` to get a ready-made scaffold)
 4. **Adjust `cargo_toml_path` / `changelog_path`** if your crate is not at the repo root

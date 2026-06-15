@@ -1,0 +1,124 @@
+name: Reusable Workflow - Release (Bump → Finalize → Create → Open Next Snapshot → Rollback on Failure)
+
+# Orchestrator that chains the most common release pipeline:
+#   bump-version → finalize-release → create-release → open-next-snapshot → rollback-release (on failure)
+#
+# Use this when the only artifacts to attach are the auto-generated release
+# notes / CHANGELOG.
+
+on:
+  workflow_call:
+    inputs:
+      cargo_toml_path:
+        description: 'Path to Cargo.toml (relative to repo root). Default: `Cargo.toml`'
+        required: false
+        default: 'Cargo.toml'
+        type: string
+      cargo_lock_path:
+        description: 'Path to Cargo.lock (relative to repo root). Set to empty string to skip committing/uploading the lockfile (e.g. for libraries that do not commit Cargo.lock). Default: `Cargo.lock`'
+        required: false
+        default: 'Cargo.lock'
+        type: string
+      changelog_path:
+        description: 'Path to CHANGELOG.md (relative to repo root). Default: `CHANGELOG.md`'
+        required: false
+        default: 'CHANGELOG.md'
+        type: string
+      target_branch:
+        description: 'Branch to push the release commit and tags to. Default: `main`'
+        required: false
+        default: 'main'
+        type: string
+      release_assets:
+        description: 'JSON array of asset paths to attach to the GitHub release. Default: `[]`'
+        required: false
+        default: '[]'
+        type: string
+    outputs:
+      new_version:
+        description: 'The version that was released'
+        value: ${{ jobs.bump.outputs.new_version }}
+      changelog_section_heading:
+        description: 'The CHANGELOG section heading added for this release'
+        value: ${{ jobs.bump.outputs.changelog_section_heading }}
+      next_version:
+        description: 'The next snapshot version (only set when `open_next_snapshot=true`)'
+        value: ${{ jobs.next_snapshot.outputs.next_version }}
+
+jobs:
+  determine_type:
+    runs-on: ubuntu-latest
+    outputs:
+      release_type: ${{ steps.determine.outputs.type }}
+    steps:
+      - name: Determine release type
+        id: determine
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          if [[ "$COMMIT_MSG" == *"[release:major]"* ]]; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif [[ "$COMMIT_MSG" == *"[release:minor]"* ]]; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+  bump:
+    needs: determine_type
+    uses: ./.github/workflows/bump-version.yml
+    with:
+      release_type: ${{ needs.determine_type.outputs.release_type }}
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      cargo_lock_path: ${{ inputs.cargo_lock_path }}
+      changelog_path: ${{ inputs.changelog_path }}
+    permissions:
+      contents: write
+
+  finalize:
+    needs: bump
+    uses: ./.github/workflows/finalize-release.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      cargo_lock_path: ${{ inputs.cargo_lock_path }}
+      changelog_path: ${{ inputs.changelog_path }}
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+
+  create:
+    needs: [bump, finalize]
+    uses: ./.github/workflows/create-release.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      changelog_section_heading: ${{ needs.bump.outputs.changelog_section_heading }}
+      changelog_path: ${{ inputs.changelog_path }}
+      release_assets: ${{ inputs.release_assets }}
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+
+  next_snapshot:
+    needs: create
+    uses: ./.github/workflows/open-next-snapshot.yml
+    with:
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      cargo_lock_path: ${{ inputs.cargo_lock_path }}
+      changelog_path: ${{ inputs.changelog_path }}
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+
+  rollback:
+    if: failure() && needs.bump.outputs.new_version != ''
+    needs: [bump, finalize, create, next_snapshot]
+    uses: ./.github/workflows/rollback-release.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      delete_github_release: 'true'
+      delete_container_image: 'false'
+      delete_tag: 'true'
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+      packages: write

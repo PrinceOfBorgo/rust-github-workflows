@@ -11,10 +11,22 @@ Reusable GitHub Actions workflows for automating releases of **Rust projects** a
 
 ## What This Repository Contains
 
+Granular reusable workflows (compose them yourself when you need extra build steps):
+
 - `.github/workflows/bump-version.yml`
+- `.github/workflows/docker-build-push.yml`
 - `.github/workflows/finalize-release.yml`
 - `.github/workflows/create-release.yml`
 - `.github/workflows/open-next-snapshot.yml`
+- `.github/workflows/rollback-release.yml`
+
+Orchestrator workflows (call once to run a pre-wired pipeline, including automatic rollback on failure):
+
+- `.github/workflows/release.yml` — `bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
+- `.github/workflows/release-docker.yml` — `bump → docker-build-push → finalize → create → open-next-snapshot → rollback-release (on failure)` (rollback will also delete the pushed Docker image)
+
+Documentation:
+
 - `MODULAR_WORKFLOWS_GUIDE.md`
 - `TEMPLATES_RELEASE_WORKFLOWS.md`
 - `CHANGELOG.template.md`
@@ -22,6 +34,63 @@ Reusable GitHub Actions workflows for automating releases of **Rust projects** a
 Use `MODULAR_WORKFLOWS_GUIDE.md` as the primary documentation, `TEMPLATES_RELEASE_WORKFLOWS.md` for copy-paste workflow examples, and `CHANGELOG.template.md` as the starting point for your project's `CHANGELOG.md`.
 
 ## Quick Start
+
+You have two options depending on how much custom logic the consumer pipeline needs.
+
+### Option A — Use an orchestrator (recommended for the common cases)
+
+If the only thing your release does is bump version + create a GitHub release (optionally with a Docker push), call one of the orchestrators and you're done.
+
+Plain release (no Docker):
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  release:
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1.0.0
+    permissions:
+      contents: write
+```
+
+Release with Docker image push:
+
+```yaml
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  release:
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1.0.0
+    with:
+      platforms: linux/amd64,linux/arm64
+    permissions:
+      contents: write
+      packages: write
+```
+
+Both orchestrators infer the release type (`major` / `minor` / `patch`) from the head commit message tag and run the full pipeline including the next-snapshot bump.
+
+### Option B — Compose granular workflows
+
+Use this when you need extra steps between stages (custom builds, deploy bundles, validation jobs, etc.).
 
 1. Add a job that determines release type from commit message.
 2. Call the reusable bump workflow.

@@ -1,5 +1,10 @@
 name: Reusable Workflow - Finalize Release
 
+# Downloads the `release-files` artifact produced by `bump-version.yml`,
+# commits the updated `Cargo.toml`, optional `Cargo.lock`, and
+# `CHANGELOG.md`, creates the `vX.Y.Z` git tag, and pushes both the
+# commit and the tag to the target branch.
+
 on:
   workflow_call:
     inputs:

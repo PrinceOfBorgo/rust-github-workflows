@@ -1,0 +1,140 @@
+name: Reusable Workflow - Rollback Release
+
+# Best-effort cleanup of a release that failed mid-pipeline. Tries to:
+#   1. Delete the `vX.Y.Z` GitHub release (if it was created)
+#   2. Delete the matching container image version from the registry's
+#      package (if it was pushed). Currently supports `ghcr.io` only;
+#      other registries are skipped.
+#   3. Delete the `vX.Y.Z` git tag locally and on `target_branch`'s remote
+#      (if the finalize step pushed it).
+#
+# Each step is guarded so that a missing/already-cleaned artifact does
+# not fail the rollback. This workflow is meant to be called from the
+# release orchestrators as `if: failure()`, but it is also safe to invoke
+# manually (e.g. via `workflow_dispatch`) to clean up after a partial
+# release.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'The version that was being released (without v prefix). Used to locate the GitHub release, container version, and git tag to delete.'
+        required: true
+        type: string
+      delete_github_release:
+        description: 'Whether to attempt deleting the GitHub release. Default: `true`'
+        required: false
+        default: 'true'
+        type: string
+      delete_container_image:
+        description: 'Whether to attempt deleting the matching container image version. Default: `false`'
+        required: false
+        default: 'false'
+        type: string
+      container_package_name:
+        description: 'Name of the container package to clean up (used when `delete_container_image=true`). Default: github.event.repository.name'
+        required: false
+        default: ''
+        type: string
+      registry:
+        description: 'Container registry where the image was pushed. Currently only `ghcr.io` is supported. Default: `ghcr.io`'
+        required: false
+        default: 'ghcr.io'
+        type: string
+      delete_tag:
+        description: 'Whether to attempt deleting the `vX.Y.Z` git tag from the remote. Default: `true`'
+        required: false
+        default: 'true'
+        type: string
+      target_branch:
+        description: 'Remote branch to push the tag deletion to. Default: `main`'
+        required: false
+        default: 'main'
+        type: string
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        if: inputs.delete_tag == 'true'
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.target_branch }}
+
+      - name: Delete GitHub release
+        if: inputs.delete_github_release == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_VERSION="${{ inputs.version }}"
+          if gh release view "v${NEW_VERSION}" >/dev/null 2>&1; then
+            gh release delete "v${NEW_VERSION}" --yes || true
+            echo "Deleted GitHub release v${NEW_VERSION}"
+          else
+            echo "No GitHub release v${NEW_VERSION} found, skipping"
+          fi
+
+      - name: Delete container image version
+        if: inputs.delete_container_image == 'true' && inputs.registry == 'ghcr.io'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_VERSION="${{ inputs.version }}"
+          REPO_OWNER="${{ github.repository_owner }}"
+          PACKAGE_NAME="${{ inputs.container_package_name }}"
+          if [[ -z "$PACKAGE_NAME" ]]; then
+            PACKAGE_NAME="${{ github.event.repository.name }}"
+          fi
+
+          delete_version_for_owner_type() {
+            local owner_type="$1"
+            if ! gh api --method GET "/${owner_type}/${REPO_OWNER}/packages/container/${PACKAGE_NAME}" >/dev/null 2>&1; then
+              return 1
+            fi
+            local version_id
+            version_id=$(gh api "/${owner_type}/${REPO_OWNER}/packages/container/${PACKAGE_NAME}/versions" \
+              | jq -r ".[] | select(.metadata.container.tags[]? == \"v${NEW_VERSION}\") | .id" \
+              | head -1)
+            if [[ -n "$version_id" ]]; then
+              gh api --method DELETE "/${owner_type}/${REPO_OWNER}/packages/container/${PACKAGE_NAME}/versions/${version_id}" || true
+              echo "Deleted ${owner_type}/${REPO_OWNER}/${PACKAGE_NAME} version v${NEW_VERSION} (id ${version_id})"
+            else
+              echo "No container version tagged v${NEW_VERSION} found for ${owner_type}/${REPO_OWNER}/${PACKAGE_NAME}, skipping"
+            fi
+            return 0
+          }
+
+          if ! delete_version_for_owner_type "orgs"; then
+            delete_version_for_owner_type "users" || \
+              echo "No container package ${PACKAGE_NAME} found under orgs/${REPO_OWNER} or users/${REPO_OWNER}, skipping"
+          fi
+
+      - name: Delete git tag
+        if: inputs.delete_tag == 'true'
+        run: |
+          NEW_VERSION="${{ inputs.version }}"
+          TAG="v${NEW_VERSION}"
+
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+          if git ls-remote --tags origin "refs/tags/${TAG}" | grep -q "${TAG}"; then
+            git push origin ":refs/tags/${TAG}" || true
+            echo "Deleted remote tag ${TAG}"
+          else
+            echo "No remote tag ${TAG} found, skipping"
+          fi
+
+          if git rev-parse "${TAG}" >/dev/null 2>&1; then
+            git tag -d "${TAG}" || true
+            echo "Deleted local tag ${TAG}"
+          fi
+
+      - name: Rollback summary
+        run: echo "Rollback for v${{ inputs.version }} completed (best-effort)."

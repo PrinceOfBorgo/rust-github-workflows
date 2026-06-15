@@ -11,7 +11,20 @@ This guide explains how to use the reusable GitHub Actions workflows for managin
 
 ## Architecture Overview
 
-The release process is split into modular reusable workflows:
+The repository ships two layers of reusable workflows:
+
+- **Granular workflows** (one job each) — building blocks you compose yourself when the consumer pipeline needs custom steps:
+    - [`bump-version.yml`](#1-bump-versionyml)
+    - [`docker-build-push.yml`](#5-docker-build-pushyml)
+    - [`finalize-release.yml`](#2-finalize-releaseyml)
+    - [`create-release.yml`](#3-create-releaseyml)
+    - [`open-next-snapshot.yml`](#4-open-next-snapshotyml)
+    - [`rollback-release.yml`](#6-rollback-releaseyml)
+- **Orchestrators** — chain the granular ones for the most common pipelines (with automatic rollback on failure):
+    - [`release.yml`](#7-releaseyml) — `bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
+    - [`release-docker.yml`](#8-release-dockeryml) — same as above but with a Docker build/push between bump and finalize
+
+Use an orchestrator when you don't need extra build steps; otherwise compose the granular workflows yourself.
 
 ### 1. **bump-version.yml**
 Bumps the Cargo crate version (major/minor/patch) using `cargo set-version` and rewrites the `## [X.Y.Z-SNAPSHOT]` line in `CHANGELOG.md` with the new version and date.
@@ -35,7 +48,49 @@ with:
 
 ---
 
-### 2. **finalize-release.yml**
+### 2. **docker-build-push.yml**
+Builds a (multi-arch) Docker image and pushes it to a container registry. Two modes:
+
+- **Plain Docker build** (default) — just runs `docker/setup-buildx-action`, `docker/login-action`, and `docker/build-push-action` against the configured `dockerfile`/`context`/`platforms`.
+- **Rust cross-compile** (`cargo_zigbuild: 'true'`) — also installs the Rust toolchain plus zig and `cargo-zigbuild` and builds every entry of `rust_targets` before the Docker build, so a `Dockerfile` that copies pre-built binaries via build-args (e.g. `BIN_PATH_AMD64=target/x86_64-unknown-linux-musl/release/<bin>`) works out of the box.
+
+**Inputs (most common):**
+- `version` (optional, default: empty) - When set, pushes `<image>:v<version>`
+- `image_name` (optional, default: lowercased `github.repository`) - Image name without registry, e.g. `org/app`
+- `registry` (optional, default: `ghcr.io`)
+- `registry_username` (optional, default: `github.actor`)
+- `dockerfile` (optional, default: `Dockerfile`)
+- `context` (optional, default: `.`)
+- `platforms` (optional, default: `linux/amd64`) - Comma-separated, e.g. `linux/amd64,linux/arm64,linux/arm/v7`
+- `push_latest` (optional, default: `'true'`) - Also tag as `:latest`
+- `extra_tags` (optional) - Newline-separated additional fully-qualified tags
+- `build_args` (optional) - Newline-separated `KEY=value` build args
+- `cargo_zigbuild` (optional, default: `'false'`) - Enable Rust cross-compile mode
+- `rust_targets` (optional, default: `x86_64-unknown-linux-musl`) - Targets to build when `cargo_zigbuild=true`
+- `cargo_build_args` (optional) - Extra args appended to each `cargo zigbuild --release --target <t>`
+- `zig_version` (optional, default: `0.13.0`)
+
+**Secrets:**
+- `registry_password` (optional) - Falls back to `secrets.GITHUB_TOKEN` when omitted.
+
+**Outputs:**
+- `image` - Fully-qualified `registry/name` that was pushed
+- `tags` - Newline-separated list of pushed tags
+
+**Usage:**
+```yaml
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/docker-build-push.yml@v1.0.0
+with:
+  version: ${{ needs.bump_version.outputs.new_version }}
+  platforms: linux/amd64,linux/arm64
+permissions:
+  contents: read
+  packages: write
+```
+
+---
+
+### 3. **finalize-release.yml**
 Commits the updated `Cargo.toml`, `Cargo.lock` (when present), and `CHANGELOG.md`, creates a `vX.Y.Z` git tag, and pushes to the target branch.
 
 **Inputs:**
@@ -55,7 +110,7 @@ Commits the updated `Cargo.toml`, `Cargo.lock` (when present), and `CHANGELOG.md
 
 ---
 
-### 3. **create-release.yml**
+### 4. **create-release.yml**
 Creates a GitHub release with auto-generated notes and optional asset attachments.
 
 **Inputs:**
@@ -77,7 +132,7 @@ Creates a GitHub release with auto-generated notes and optional asset attachment
 
 ---
 
-### 4. **open-next-snapshot.yml**
+### 5. **open-next-snapshot.yml**
 Automatically opens the next development iteration after a release by bumping the Cargo version to `X.Y.(Z+1)-SNAPSHOT` and prepending a new snapshot section to the CHANGELOG.
 
 **Inputs:**
@@ -96,6 +151,110 @@ uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.y
 with:
   # Optional: can customize paths and branch if needed
 ```
+
+---
+
+### 6. **rollback-release.yml**
+Best-effort cleanup of a release that failed mid-pipeline. Tries to:
+
+1. Delete the `vX.Y.Z` GitHub release (if it was created).
+2. Delete the matching container image version from the registry's package (if it was pushed). Currently supports `ghcr.io` only; other registries are skipped.
+3. Delete the `vX.Y.Z` git tag locally and on the remote (if finalize already pushed it).
+
+Each step is guarded so a missing/already-cleaned artifact does not fail the rollback. Designed to be called as `if: failure()` from an orchestrator (the bundled `release.yml` and `release-docker.yml` already do this), but also safe to invoke manually via `workflow_dispatch` to clean up after a partial release.
+
+**Inputs:**
+- `version` (required) - The version that was being released (without `v` prefix).
+- `delete_github_release` (optional, default: `'true'`)
+- `delete_container_image` (optional, default: `'false'`) - Set to `'true'` for Docker-publishing pipelines.
+- `container_package_name` (optional, default: `github.event.repository.name`) - Override when the GHCR package name doesn't match the repository name.
+- `registry` (optional, default: `ghcr.io`) - Container deletion is skipped for any other registry.
+- `delete_tag` (optional, default: `'true'`)
+- `target_branch` (optional, default: `main`) - Used as the checkout ref for the tag deletion step.
+
+**Usage (manual cleanup, e.g. via `workflow_dispatch`):**
+```yaml
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to roll back (without v prefix)'
+        required: true
+        type: string
+
+jobs:
+  rollback:
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1.0.0
+    with:
+      version: ${{ inputs.version }}
+      delete_container_image: 'true'
+    permissions:
+      contents: write
+      packages: write
+```
+
+---
+
+### 7. **release.yml**
+Orchestrator that chains `bump-version → finalize-release → create-release → open-next-snapshot`. The release type (`major`/`minor`/`patch`) is inferred from the head commit message tag (`[release:major]`, `[release:minor]`, `[release:patch]`, or `[release]` → patch).
+
+Use this when the only artifacts attached to the release are the auto-generated notes and the CHANGELOG section. If you need to build extra artifacts (binaries, deploy bundles, etc.), compose the granular workflows directly instead.
+
+**Inputs:**
+- `cargo_toml_path` (optional, default: `Cargo.toml`)
+- `cargo_lock_path` (optional, default: `Cargo.lock`) - Set to `''` to skip the lockfile.
+- `changelog_path` (optional, default: `CHANGELOG.md`)
+- `target_branch` (optional, default: `main`)
+- `release_assets` (optional, default: `[]`) - JSON array of asset paths
+
+**Outputs:**
+- `new_version`
+- `changelog_section_heading`
+- `next_version`
+
+**Usage:**
+```yaml
+jobs:
+  release:
+    if: contains(github.event.head_commit.message, '[release')
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1.0.0
+    permissions:
+      contents: write
+```
+
+If any job in the chain fails, an `if: failure()` rollback job runs `rollback-release.yml` to delete the partially-created GitHub release and `vX.Y.Z` tag.
+
+---
+
+### 8. **release-docker.yml**
+Orchestrator that chains `bump-version → docker-build-push → finalize-release → create-release → open-next-snapshot`. The Docker image is tagged with `:v<new_version>` (and `:latest` when `push_latest=true`) and pushed to the configured registry **before** finalize, so a failed image push aborts the release before any tag/commit is pushed.
+
+**Inputs:** all of `release.yml`'s inputs plus all of `docker-build-push.yml`'s inputs (see those sections for details).
+
+**Secrets:**
+- `registry_password` (optional) - Forwarded to `docker-build-push.yml`. Falls back to `secrets.GITHUB_TOKEN` when omitted.
+
+**Outputs:**
+- `new_version`
+- `changelog_section_heading`
+- `next_version`
+- `image`
+- `tags`
+
+**Usage:**
+```yaml
+jobs:
+  release:
+    if: contains(github.event.head_commit.message, '[release')
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1.0.0
+    with:
+      platforms: linux/amd64,linux/arm64
+    permissions:
+      contents: write
+      packages: write
+```
+
+If any job in the chain fails, an `if: failure()` rollback job runs `rollback-release.yml` with `delete_container_image: 'true'` to delete the partially-created GitHub release, the pushed container image version, and the `vX.Y.Z` tag.
 
 ---
 
