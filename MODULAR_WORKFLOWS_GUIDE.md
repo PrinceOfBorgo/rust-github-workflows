@@ -15,14 +15,16 @@ The repository ships two layers of reusable workflows:
 
 - **Granular workflows** (one job each) — building blocks you compose yourself when the consumer pipeline needs custom steps:
     - [`bump-version.yml`](#1-bump-versionyml)
-    - [`docker-build-push.yml`](#5-docker-build-pushyml)
-    - [`finalize-release.yml`](#2-finalize-releaseyml)
-    - [`create-release.yml`](#3-create-releaseyml)
-    - [`open-next-snapshot.yml`](#4-open-next-snapshotyml)
-    - [`rollback-release.yml`](#6-rollback-releaseyml)
+    - [`build-package-binary.yml`](#2-build-package-binaryyml)
+    - [`docker-build-push.yml`](#3-docker-build-pushyml)
+    - [`finalize-release.yml`](#4-finalize-releaseyml)
+    - [`create-release.yml`](#5-create-releaseyml)
+    - [`open-next-snapshot.yml`](#6-open-next-snapshotyml)
+    - [`rollback-release.yml`](#7-rollback-releaseyml)
 - **Orchestrators** — chain the granular ones for the most common pipelines (with automatic rollback on failure):
-    - [`release.yml`](#7-releaseyml) — `bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
-    - [`release-docker.yml`](#8-release-dockeryml) — same as above but with a Docker build/push between bump and finalize
+    - [`release.yml`](#8-releaseyml) — `bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
+    - [`release-binaries.yml`](#9-release-binariesyml) — `bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)`
+    - [`release-docker.yml`](#10-release-dockeryml) — same as `release.yml` but with a Docker build/push between bump and finalize
 
 Use an orchestrator when you don't need extra build steps; otherwise compose the granular workflows yourself.
 
@@ -41,14 +43,60 @@ Bumps the Cargo crate version (major/minor/patch) using `cargo set-version` and 
 
 **Usage:**
 ```yaml
-uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1.0.0
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
 with:
   release_type: ${{ env.RELEASE_TYPE }}
 ```
 
 ---
 
-### 2. **docker-build-push.yml**
+### 2. **build-package-binary.yml**
+Builds a single Rust binary (optionally for a non-native target) and packages it into a release-ready archive (`.zip` or `.tar.gz`). The archive is uploaded as a workflow artifact named `artifact_name` so that `create-release.yml`'s `download-artifact` step lands it at `release-assets/<artifact_name>/<asset_name>` — the exact path you pass to `create-release.yml`'s `release_assets` input.
+
+Sensible defaults are computed from `bin_name`, `version`, `os_label`, `arch_label`, and `archive_format`, so the most common case requires no extra wiring; pass `artifact_name` / `asset_name` to override.
+
+**Inputs:**
+- `bin_name` (required) - Cargo `--bin` name to build; also used in the default asset name.
+- `runs_on` (required) - Runner image (e.g. `ubuntu-latest`, `windows-latest`, `macos-latest`).
+- `os_label` (required) - OS label used in the default asset name (e.g. `linux`, `windows`, `macos`).
+- `arch_label` (required) - Architecture label used in the default asset name (e.g. `x86_64`, `aarch64`).
+- `version` (optional, default: empty) - Version string used in the default asset name (without the `v` prefix). When empty, the `-<version>` segment is omitted.
+- `rust_target` (optional, default: empty) - Rust target triple (e.g. `x86_64-pc-windows-msvc`). When empty, builds for the runner's native target.
+- `archive_format` (optional, default: `zip`) - One of `zip` or `tar.gz`.
+- `artifact_name` (optional, default: `binary-<os_label>-<arch_label>`) - Workflow artifact name to upload to.
+- `asset_name` (optional, default: `<bin_name>-<version>-<arch_label>-<os_label>.<archive_format>`) - Final archive filename.
+- `cargo_toml_path` (optional, default: `Cargo.toml`) - Forwarded to `cargo build` as `--manifest-path`.
+- `package_name` (optional, default: empty) - Cargo `--package` (`-p`); useful for workspaces.
+- `cargo_build_args` (optional, default: empty) - Extra args appended to `cargo build` (e.g. `--features foo,bar`).
+- `additional_files` (optional, default: empty) - Newline-separated files/globs (e.g. `README.md`, `LICENSE`) copied into the archive alongside the binary.
+- `retention_days` (optional, default: `'1'`) - Retention for the uploaded workflow artifact.
+
+**Outputs:**
+- `artifact_name` - Workflow artifact name the archive was uploaded under.
+- `asset_name` - Final archive filename.
+- `asset_path` - Relative path the archive lands at after `actions/download-artifact@v8` (without `name`) downloads it: `release-assets/<artifact_name>/<asset_name>`.
+
+**Usage:**
+```yaml
+build_linux:
+  needs: bump_version
+  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/build-package-binary.yml@v1
+  with:
+    version: ${{ needs.bump_version.outputs.new_version }}
+    bin_name: my-app
+    runs_on: ubuntu-latest
+    rust_target: x86_64-unknown-linux-gnu
+    archive_format: tar.gz
+    os_label: linux
+    arch_label: x86_64
+    additional_files: |
+      README.md
+      LICENSE
+```
+
+---
+
+### 3. **docker-build-push.yml**
 Builds a (multi-arch) Docker image and pushes it to a container registry. Two modes:
 
 - **Plain Docker build** (default) — just runs `docker/setup-buildx-action`, `docker/login-action`, and `docker/build-push-action` against the configured `dockerfile`/`context`/`platforms`.
@@ -79,7 +127,7 @@ Builds a (multi-arch) Docker image and pushes it to a container registry. Two mo
 
 **Usage:**
 ```yaml
-uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/docker-build-push.yml@v1.0.0
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/docker-build-push.yml@v1
 with:
   version: ${{ needs.bump_version.outputs.new_version }}
   platforms: linux/amd64,linux/arm64
@@ -90,7 +138,7 @@ permissions:
 
 ---
 
-### 3. **finalize-release.yml**
+### 4. **finalize-release.yml**
 Commits the updated `Cargo.toml`, `Cargo.lock` (when present), and `CHANGELOG.md`, creates a `vX.Y.Z` git tag, and pushes to the target branch.
 
 **Inputs:**
@@ -103,14 +151,14 @@ Commits the updated `Cargo.toml`, `Cargo.lock` (when present), and `CHANGELOG.md
 
 **Usage:**
 ```yaml
-- uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1.0.0
+- uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
   with:
     version: ${{ needs.prepare.outputs.new_version }}
 ```
 
 ---
 
-### 4. **create-release.yml**
+### 5. **create-release.yml**
 Creates a GitHub release with auto-generated notes and optional asset attachments.
 
 **Inputs:**
@@ -123,7 +171,7 @@ Creates a GitHub release with auto-generated notes and optional asset attachment
 
 **Usage:**
 ```yaml
-- uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1.0.0
+- uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
   with:
     version: ${{ needs.prepare.outputs.new_version }}
     changelog_section_heading: ${{ needs.prepare.outputs.changelog_section_heading }}
@@ -132,7 +180,7 @@ Creates a GitHub release with auto-generated notes and optional asset attachment
 
 ---
 
-### 5. **open-next-snapshot.yml**
+### 6. **open-next-snapshot.yml**
 Automatically opens the next development iteration after a release by bumping the Cargo version to `X.Y.(Z+1)-SNAPSHOT` and prepending a new snapshot section to the CHANGELOG.
 
 **Inputs:**
@@ -147,14 +195,14 @@ Automatically opens the next development iteration after a release by bumping th
 
 **Usage:**
 ```yaml
-uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1.0.0
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1
 with:
   # Optional: can customize paths and branch if needed
 ```
 
 ---
 
-### 6. **rollback-release.yml**
+### 7. **rollback-release.yml**
 Best-effort cleanup of a release that failed mid-pipeline. Tries to:
 
 1. Delete the `vX.Y.Z` GitHub release (if it was created).
@@ -184,7 +232,7 @@ on:
 
 jobs:
   rollback:
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1.0.0
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1
     with:
       version: ${{ inputs.version }}
       delete_container_image: 'true'
@@ -195,7 +243,7 @@ jobs:
 
 ---
 
-### 7. **release.yml**
+### 8. **release.yml**
 Orchestrator that chains `bump-version → finalize-release → create-release → open-next-snapshot`. The release type (`major`/`minor`/`patch`) is inferred from the head commit message tag (`[release:major]`, `[release:minor]`, `[release:patch]`, or `[release]` → patch).
 
 Use this when the only artifacts attached to the release are the auto-generated notes and the CHANGELOG section. If you need to build extra artifacts (binaries, deploy bundles, etc.), compose the granular workflows directly instead.
@@ -217,7 +265,7 @@ Use this when the only artifacts attached to the release are the auto-generated 
 jobs:
   release:
     if: contains(github.event.head_commit.message, '[release')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1.0.0
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1
     permissions:
       contents: write
 ```
@@ -226,7 +274,53 @@ If any job in the chain fails, an `if: failure()` rollback job runs `rollback-re
 
 ---
 
-### 8. **release-docker.yml**
+### 9. **release-binaries.yml**
+Orchestrator that chains `bump-version → build-package-binary (matrix) → finalize-release → create-release → open-next-snapshot`. Build/package is fanned out over a JSON `targets` matrix; the resulting archive paths are auto-collected and forwarded to `create-release.yml`'s `release_assets`, so the archives are attached to the `vX.Y.Z` GitHub release. The release type (`major`/`minor`/`patch`) is inferred from the head commit message tag.
+
+Use this when your release ships pre-built binaries (one or more OS/arch combos) and the per-target wiring of [Template 6](TEMPLATES_RELEASE_WORKFLOWS.md#template-6-release-with-prebuilt-binaries-via-orchestrator-release-binariesyml) covers your build needs. If you need exotic per-target build logic (cross-compile via zigbuild, custom toolchains, etc.) compose the granular workflows directly instead.
+
+**Inputs:**
+- `bin_name` (required) - Cargo `--bin` name built for every target.
+- `targets` (required) - JSON array of target descriptors. Each entry MUST set `os_label`, `arch_label`, `runs_on`, and `archive_format`, and MAY set `rust_target`, `package_name`, `cargo_build_args`, `additional_files`, `artifact_name`, `asset_name` (per-target overrides win over the workflow-level defaults).
+- `cargo_toml_path` (optional, default: `Cargo.toml`)
+- `cargo_lock_path` (optional, default: `Cargo.lock`) - Set to `''` to skip the lockfile.
+- `changelog_path` (optional, default: `CHANGELOG.md`)
+- `target_branch` (optional, default: `main`)
+- `package_name` (optional, default: empty) - Default Cargo `--package` for every target.
+- `cargo_build_args` (optional, default: empty) - Default extra args appended to `cargo build`.
+- `additional_files` (optional, default: empty) - Default newline-separated files/globs to include in every archive.
+- `retention_days` (optional, default: `'1'`) - Retention for the uploaded workflow artifacts.
+- `extra_release_assets` (optional, default: `[]`) - JSON array of additional asset paths to attach on top of the matrix-produced archives.
+
+**Outputs:**
+- `new_version`
+- `changelog_section_heading`
+- `next_version`
+- `release_assets` - JSON array of the asset paths attached to the GitHub release.
+
+**Usage:**
+```yaml
+jobs:
+  release:
+    if: contains(github.event.head_commit.message, '[release')
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v1
+    with:
+      bin_name: my-app
+      targets: |
+        [
+          {"os_label":"linux","arch_label":"x86_64","runs_on":"ubuntu-latest","rust_target":"x86_64-unknown-linux-gnu","archive_format":"tar.gz"},
+          {"os_label":"windows","arch_label":"x86_64","runs_on":"windows-latest","rust_target":"x86_64-pc-windows-msvc","archive_format":"zip"},
+          {"os_label":"macos","arch_label":"aarch64","runs_on":"macos-latest","rust_target":"aarch64-apple-darwin","archive_format":"tar.gz"}
+        ]
+    permissions:
+      contents: write
+```
+
+If any job in the chain fails (including any matrix build), an `if: failure()` rollback job runs `rollback-release.yml` to delete the partially-created GitHub release and `vX.Y.Z` tag. The uploaded workflow artifacts simply expire on their own (`retention_days`).
+
+---
+
+### 10. **release-docker.yml**
 Orchestrator that chains `bump-version → docker-build-push → finalize-release → create-release → open-next-snapshot`. The Docker image is tagged with `:v<new_version>` (and `:latest` when `push_latest=true`) and pushed to the configured registry **before** finalize, so a failed image push aborts the release before any tag/commit is pushed.
 
 **Inputs:** all of `release.yml`'s inputs plus all of `docker-build-push.yml`'s inputs (see those sections for details).
@@ -246,7 +340,7 @@ Orchestrator that chains `bump-version → docker-build-push → finalize-releas
 jobs:
   release:
     if: contains(github.event.head_commit.message, '[release')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1.0.0
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1
     with:
       platforms: linux/amd64,linux/arm64
     permissions:
@@ -264,7 +358,7 @@ If any job in the chain fails, an `if: failure()` rollback job runs `rollback-re
 
 Call the reusable workflows directly from this repository:
 ```yaml
-uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1.0.0
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
 ```
 
 ### Step 2: Create Your Project-Specific Release Workflow
@@ -300,7 +394,7 @@ jobs:
   # Use the bump workflow from the shared repository
   bump_and_changelog:
     needs: prepare
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1.0.0
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
     with:
       release_type: ${{ needs.prepare.outputs.release_type }}
     permissions:
@@ -309,7 +403,7 @@ jobs:
   # Use the finalize workflow from the shared repository
   finalize:
     needs: bump_and_changelog
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1.0.0
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
     with:
       version: ${{ needs.bump_and_changelog.outputs.new_version }}
     permissions:
@@ -318,7 +412,7 @@ jobs:
   # Use the create-release workflow from the shared repository
   create_release:
     needs: [finalize, bump_and_changelog]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1.0.0
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
     with:
       version: ${{ needs.bump_and_changelog.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_and_changelog.outputs.changelog_section_heading }}
@@ -345,7 +439,7 @@ If you produce additional release artifacts (compiled binaries, Docker images, p
 
   finalize:
     needs: [bump_and_changelog, build]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1.0.0
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
     with:
       version: ${{ needs.bump_and_changelog.outputs.new_version }}
     permissions:
@@ -353,7 +447,7 @@ If you produce additional release artifacts (compiled binaries, Docker images, p
 
   create_release:
     needs: [finalize, bump_and_changelog, build]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1.0.0
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
     with:
       version: ${{ needs.bump_and_changelog.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_and_changelog.outputs.changelog_section_heading }}

@@ -1,0 +1,256 @@
+name: Reusable Workflow - Build & Package Binary
+
+# Builds a single Rust binary (optionally for a non-native target) and
+# packages it into a release-ready archive (`.zip` or `.tar.gz`) that is
+# uploaded as a workflow artifact for `create-release.yml` to attach.
+#
+# The asset is uploaded under the `artifact_name` workflow artifact, which
+# means downstream `actions/download-artifact@v8` (no name) will place it
+# at `release-assets/<artifact_name>/<asset_name>`. That path is what you
+# pass to `create-release.yml`'s `release_assets` input.
+#
+# Defaults compute reasonable artifact/asset names from `bin_name`,
+# `version`, `os_label`, `arch_label`, and `archive_format` so the most
+# common case requires no extra wiring; pass `artifact_name` /
+# `asset_name` explicitly to override.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: 'Version string used in the default asset name (without the `v` prefix). Default: empty (no version segment in the asset name)'
+        required: false
+        default: ''
+        type: string
+      bin_name:
+        description: 'Cargo `--bin` name to build. Also used in the default asset name.'
+        required: true
+        type: string
+      runs_on:
+        description: 'Runner image to build on (e.g. `ubuntu-latest`, `windows-latest`, `macos-latest`).'
+        required: true
+        type: string
+      rust_target:
+        description: 'Rust target triple (e.g. `x86_64-unknown-linux-gnu`). When empty, builds for the runner''s native target.'
+        required: false
+        default: ''
+        type: string
+      archive_format:
+        description: 'Archive format: `zip` or `tar.gz`. Default: `zip`'
+        required: false
+        default: 'zip'
+        type: string
+      os_label:
+        description: 'OS label used in the default asset name (e.g. `linux`, `windows`, `macos`).'
+        required: true
+        type: string
+      arch_label:
+        description: 'Architecture label used in the default asset name (e.g. `x86_64`, `aarch64`).'
+        required: true
+        type: string
+      artifact_name:
+        description: 'Workflow artifact name to upload to. Default: `binary-<os_label>-<arch_label>`'
+        required: false
+        default: ''
+        type: string
+      asset_name:
+        description: 'Final archive filename. Default: `<bin_name>-<version>-<arch_label>-<os_label>.<archive_format>` (the `-<version>` segment is omitted when `version` is empty).'
+        required: false
+        default: ''
+        type: string
+      cargo_toml_path:
+        description: 'Path to Cargo.toml (relative to repo root). Default: `Cargo.toml`'
+        required: false
+        default: 'Cargo.toml'
+        type: string
+      package_name:
+        description: 'Cargo `--package` (`-p`) to build. Useful for workspaces. Default: empty (build the root crate / current package).'
+        required: false
+        default: ''
+        type: string
+      cargo_build_args:
+        description: 'Extra arguments appended to `cargo build --release --locked --bin <bin_name>` (e.g. `--features foo,bar`). Default: empty'
+        required: false
+        default: ''
+        type: string
+      additional_files:
+        description: 'Newline-separated list of files (or globs) to copy into the archive alongside the binary (e.g. `README.md`, `LICENSE`). Default: empty'
+        required: false
+        default: ''
+        type: string
+      retention_days:
+        description: 'Retention (in days) for the uploaded workflow artifact. Default: `1`'
+        required: false
+        default: '1'
+        type: string
+    outputs:
+      artifact_name:
+        description: 'Workflow artifact name the archive was uploaded under.'
+        value: ${{ jobs.build_and_package.outputs.artifact_name }}
+      asset_name:
+        description: 'Final archive filename.'
+        value: ${{ jobs.build_and_package.outputs.asset_name }}
+      asset_path:
+        description: 'Relative path the archive will land at after `actions/download-artifact@v8` (without `name`) downloads it: `release-assets/<artifact_name>/<asset_name>`.'
+        value: ${{ jobs.build_and_package.outputs.asset_path }}
+
+jobs:
+  build_and_package:
+    runs-on: ${{ inputs.runs_on }}
+    env:
+      CARGO_INCREMENTAL: 0
+      CARGO_NET_RETRY: 10
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: short
+      RUSTUP_MAX_RETRIES: 10
+    outputs:
+      artifact_name: ${{ steps.resolve.outputs.artifact_name }}
+      asset_name: ${{ steps.resolve.outputs.asset_name }}
+      asset_path: ${{ steps.resolve.outputs.asset_path }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ inputs.rust_target }}
+
+      - name: Cache cargo registry and build
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          key: ${{ inputs.os_label }}-${{ inputs.arch_label }}-${{ inputs.rust_target }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Resolve names and paths
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARCHIVE_FORMAT='${{ inputs.archive_format }}'
+          case "$ARCHIVE_FORMAT" in
+            zip|tar.gz) ;;
+            *) echo "::error::Unsupported archive_format '$ARCHIVE_FORMAT' (expected 'zip' or 'tar.gz')"; exit 1 ;;
+          esac
+
+          OS_LABEL='${{ inputs.os_label }}'
+          ARCH_LABEL='${{ inputs.arch_label }}'
+          BIN_NAME='${{ inputs.bin_name }}'
+          VERSION='${{ inputs.version }}'
+
+          ARTIFACT_NAME='${{ inputs.artifact_name }}'
+          if [[ -z "$ARTIFACT_NAME" ]]; then
+            ARTIFACT_NAME="binary-${OS_LABEL}-${ARCH_LABEL}"
+          fi
+
+          ASSET_NAME='${{ inputs.asset_name }}'
+          if [[ -z "$ASSET_NAME" ]]; then
+            if [[ -n "$VERSION" ]]; then
+              ASSET_NAME="${BIN_NAME}-${VERSION}-${ARCH_LABEL}-${OS_LABEL}.${ARCHIVE_FORMAT}"
+            else
+              ASSET_NAME="${BIN_NAME}-${ARCH_LABEL}-${OS_LABEL}.${ARCHIVE_FORMAT}"
+            fi
+          fi
+
+          BIN_EXT=""
+          if [[ "${RUNNER_OS:-}" == "Windows" ]]; then
+            BIN_EXT=".exe"
+          fi
+
+          if [[ -n '${{ inputs.rust_target }}' ]]; then
+            BIN_PATH="target/${{ inputs.rust_target }}/release/${BIN_NAME}${BIN_EXT}"
+          else
+            BIN_PATH="target/release/${BIN_NAME}${BIN_EXT}"
+          fi
+
+          {
+            echo "artifact_name=${ARTIFACT_NAME}"
+            echo "asset_name=${ASSET_NAME}"
+            echo "asset_path=release-assets/${ARTIFACT_NAME}/${ASSET_NAME}"
+            echo "bin_path=${BIN_PATH}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build release binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ARGS=(build --release --locked --bin '${{ inputs.bin_name }}')
+          if [[ -n '${{ inputs.package_name }}' ]]; then
+            ARGS+=(--package '${{ inputs.package_name }}')
+          fi
+          if [[ -n '${{ inputs.rust_target }}' ]]; then
+            ARGS+=(--target '${{ inputs.rust_target }}')
+          fi
+          if [[ -n '${{ inputs.cargo_toml_path }}' ]]; then
+            ARGS+=(--manifest-path '${{ inputs.cargo_toml_path }}')
+          fi
+
+          EXTRA='${{ inputs.cargo_build_args }}'
+          # shellcheck disable=SC2206
+          EXTRA_ARR=( $EXTRA )
+
+          echo "::group::cargo ${ARGS[*]} ${EXTRA_ARR[*]}"
+          cargo "${ARGS[@]}" "${EXTRA_ARR[@]}"
+          echo "::endgroup::"
+
+      - name: Package binary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ASSET_NAME='${{ steps.resolve.outputs.asset_name }}'
+          BIN_PATH='${{ steps.resolve.outputs.bin_path }}'
+          ARCHIVE_FORMAT='${{ inputs.archive_format }}'
+
+          if [[ ! -f "$BIN_PATH" ]]; then
+            echo "::error::Binary not found at $BIN_PATH"
+            exit 1
+          fi
+
+          mkdir -p staging dist
+          cp "$BIN_PATH" staging/
+
+          ADDITIONAL='${{ inputs.additional_files }}'
+          if [[ -n "$ADDITIONAL" ]]; then
+            while IFS= read -r entry; do
+              [[ -z "$entry" ]] && continue
+              # Expand globs if any.
+              for match in $entry; do
+                if [[ -e "$match" ]]; then
+                  cp -r "$match" staging/
+                else
+                  echo "::warning::additional_files entry not found: $match"
+                fi
+              done
+            done <<< "$ADDITIONAL"
+          fi
+
+          if [[ "$ARCHIVE_FORMAT" == "zip" ]]; then
+            if command -v 7z >/dev/null 2>&1; then
+              ( cd staging && 7z a -tzip -bd "../dist/${ASSET_NAME}" . >/dev/null )
+            elif command -v zip >/dev/null 2>&1; then
+              ( cd staging && zip -r "../dist/${ASSET_NAME}" . >/dev/null )
+            else
+              echo "::error::No zip tool available on this runner (tried '7z' and 'zip')"
+              exit 1
+            fi
+          else
+            tar -czf "dist/${ASSET_NAME}" -C staging .
+          fi
+
+          echo "Created dist/${ASSET_NAME}:"
+          ls -lh "dist/${ASSET_NAME}"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.resolve.outputs.artifact_name }}
+          path: dist/${{ steps.resolve.outputs.asset_name }}
+          if-no-files-found: error
+          retention-days: ${{ fromJson(inputs.retention_days) }}

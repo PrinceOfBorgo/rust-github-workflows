@@ -1,0 +1,238 @@
+name: Reusable Workflow - Release with Binaries (Bump → Build/Package (matrix) → Finalize → Create → Open Next Snapshot → Rollback on Failure)
+
+# Orchestrator that chains the full release pipeline for projects that ship
+# pre-built binary archives attached to the GitHub release:
+#   bump-version → build-package-binary (matrix) → finalize-release → create-release → open-next-snapshot → rollback-release (on failure)
+#
+# The build job is fanned out over a JSON matrix of `targets`. Each entry
+# describes one binary to build and package; after every build the
+# orchestrator computes the resulting `release_assets` paths and forwards
+# them to `create-release.yml` so the archives are attached to the
+# `vX.Y.Z` GitHub release.
+
+on:
+  workflow_call:
+    inputs:
+      cargo_toml_path:
+        description: 'Path to Cargo.toml (relative to repo root). Default: `Cargo.toml`'
+        required: false
+        default: 'Cargo.toml'
+        type: string
+      cargo_lock_path:
+        description: 'Path to Cargo.lock (relative to repo root). Set to empty string to skip committing/uploading the lockfile (e.g. for libraries that do not commit Cargo.lock). Default: `Cargo.lock`'
+        required: false
+        default: 'Cargo.lock'
+        type: string
+      changelog_path:
+        description: 'Path to CHANGELOG.md (relative to repo root). Default: `CHANGELOG.md`'
+        required: false
+        default: 'CHANGELOG.md'
+        type: string
+      target_branch:
+        description: 'Branch to push the release commit and tags to. Default: `main`'
+        required: false
+        default: 'main'
+        type: string
+      bin_name:
+        description: 'Cargo `--bin` name to build for every entry of `targets`.'
+        required: true
+        type: string
+      package_name:
+        description: 'Default Cargo `--package` (`-p`) for every target. Useful for workspaces. Override per target via `package_name` on the matrix entry. Default: empty.'
+        required: false
+        default: ''
+        type: string
+      cargo_build_args:
+        description: 'Default extra args appended to `cargo build` for every target (e.g. `--features foo`). Override per target via `cargo_build_args` on the matrix entry. Default: empty.'
+        required: false
+        default: ''
+        type: string
+      additional_files:
+        description: 'Default newline-separated list of extra files (or globs) to include in every archive. Override per target via `additional_files` on the matrix entry. Default: empty.'
+        required: false
+        default: ''
+        type: string
+      targets:
+        description: |
+          JSON array describing each binary to build. Each entry MUST set
+          `os_label`, `arch_label`, `runs_on`, and `archive_format`, and
+          MAY set `rust_target`, `package_name`, `cargo_build_args`,
+          `additional_files`, `artifact_name`, `asset_name`. Example:
+            [
+              {"os_label":"linux","arch_label":"x86_64","runs_on":"ubuntu-latest","rust_target":"x86_64-unknown-linux-gnu","archive_format":"tar.gz"},
+              {"os_label":"windows","arch_label":"x86_64","runs_on":"windows-latest","rust_target":"x86_64-pc-windows-msvc","archive_format":"zip"},
+              {"os_label":"macos","arch_label":"aarch64","runs_on":"macos-latest","rust_target":"aarch64-apple-darwin","archive_format":"tar.gz"}
+            ]
+        required: true
+        type: string
+      retention_days:
+        description: 'Retention (in days) for the uploaded binary workflow artifacts. Default: `1`'
+        required: false
+        default: '1'
+        type: string
+      extra_release_assets:
+        description: 'JSON array of additional asset paths to attach to the GitHub release on top of the matrix-produced archives. Default: `[]`'
+        required: false
+        default: '[]'
+        type: string
+    outputs:
+      new_version:
+        description: 'The version that was released'
+        value: ${{ jobs.bump.outputs.new_version }}
+      changelog_section_heading:
+        description: 'The CHANGELOG section heading added for this release'
+        value: ${{ jobs.bump.outputs.changelog_section_heading }}
+      next_version:
+        description: 'The next snapshot version'
+        value: ${{ jobs.next_snapshot.outputs.next_version }}
+      release_assets:
+        description: 'JSON array of asset paths that were attached to the GitHub release.'
+        value: ${{ jobs.compute_assets.outputs.release_assets }}
+
+jobs:
+  determine_type:
+    runs-on: ubuntu-latest
+    outputs:
+      release_type: ${{ steps.determine.outputs.type }}
+    steps:
+      - name: Determine release type
+        id: determine
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          if [[ "$COMMIT_MSG" == *"[release:major]"* ]]; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif [[ "$COMMIT_MSG" == *"[release:minor]"* ]]; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi
+
+  bump:
+    needs: determine_type
+    uses: ./.github/workflows/bump-version.yml
+    with:
+      release_type: ${{ needs.determine_type.outputs.release_type }}
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      cargo_lock_path: ${{ inputs.cargo_lock_path }}
+      changelog_path: ${{ inputs.changelog_path }}
+    permissions:
+      contents: write
+
+  build:
+    needs: bump
+    strategy:
+      fail-fast: true
+      matrix:
+        target: ${{ fromJson(inputs.targets) }}
+    uses: ./.github/workflows/build-package-binary.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      bin_name: ${{ inputs.bin_name }}
+      runs_on: ${{ matrix.target.runs_on }}
+      rust_target: ${{ matrix.target.rust_target || '' }}
+      archive_format: ${{ matrix.target.archive_format }}
+      os_label: ${{ matrix.target.os_label }}
+      arch_label: ${{ matrix.target.arch_label }}
+      artifact_name: ${{ matrix.target.artifact_name || '' }}
+      asset_name: ${{ matrix.target.asset_name || '' }}
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      package_name: ${{ matrix.target.package_name || inputs.package_name }}
+      cargo_build_args: ${{ matrix.target.cargo_build_args || inputs.cargo_build_args }}
+      additional_files: ${{ matrix.target.additional_files || inputs.additional_files }}
+      retention_days: ${{ inputs.retention_days }}
+
+  compute_assets:
+    needs: [bump, build]
+    runs-on: ubuntu-latest
+    outputs:
+      release_assets: ${{ steps.compute.outputs.assets }}
+    steps:
+      - name: Compute release_assets JSON
+        id: compute
+        shell: bash
+        env:
+          TARGETS: ${{ inputs.targets }}
+          BIN_NAME: ${{ inputs.bin_name }}
+          VERSION: ${{ needs.bump.outputs.new_version }}
+          EXTRA_ASSETS: ${{ inputs.extra_release_assets }}
+        run: |
+          set -euo pipefail
+
+          # Mirror the default name resolution from build-package-binary.yml
+          # so the orchestrator and the granular workflow stay in sync.
+          ASSETS=$(jq -nc \
+            --argjson targets "$TARGETS" \
+            --arg bin "$BIN_NAME" \
+            --arg version "$VERSION" \
+            '
+              ($targets | map(
+                . as $t |
+                ($t.artifact_name // ("binary-" + $t.os_label + "-" + $t.arch_label)) as $artifact |
+                ($t.asset_name //
+                  (if ($version | length) > 0
+                    then ($bin + "-" + $version + "-" + $t.arch_label + "-" + $t.os_label + "." + $t.archive_format)
+                    else ($bin + "-" + $t.arch_label + "-" + $t.os_label + "." + $t.archive_format)
+                  end)) as $asset |
+                ("release-assets/" + $artifact + "/" + $asset)
+              ))
+            ')
+
+          EXTRA_JSON="${EXTRA_ASSETS:-[]}"
+          if [[ "$EXTRA_JSON" != "[]" && -n "$EXTRA_JSON" ]]; then
+            ASSETS=$(jq -nc \
+              --argjson a "$ASSETS" \
+              --argjson b "$EXTRA_JSON" \
+              '$a + $b')
+          fi
+
+          echo "Computed release_assets: $ASSETS"
+          echo "assets=$ASSETS" >> "$GITHUB_OUTPUT"
+
+  finalize:
+    needs: [bump, build, compute_assets]
+    uses: ./.github/workflows/finalize-release.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      cargo_lock_path: ${{ inputs.cargo_lock_path }}
+      changelog_path: ${{ inputs.changelog_path }}
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+
+  create:
+    needs: [bump, finalize, compute_assets]
+    uses: ./.github/workflows/create-release.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      changelog_section_heading: ${{ needs.bump.outputs.changelog_section_heading }}
+      changelog_path: ${{ inputs.changelog_path }}
+      release_assets: ${{ needs.compute_assets.outputs.release_assets }}
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+
+  next_snapshot:
+    needs: create
+    uses: ./.github/workflows/open-next-snapshot.yml
+    with:
+      cargo_toml_path: ${{ inputs.cargo_toml_path }}
+      cargo_lock_path: ${{ inputs.cargo_lock_path }}
+      changelog_path: ${{ inputs.changelog_path }}
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+
+  rollback:
+    if: failure() && needs.bump.outputs.new_version != ''
+    needs: [bump, build, compute_assets, finalize, create, next_snapshot]
+    uses: ./.github/workflows/rollback-release.yml
+    with:
+      version: ${{ needs.bump.outputs.new_version }}
+      delete_github_release: 'true'
+      delete_container_image: 'false'
+      delete_tag: 'true'
+      target_branch: ${{ inputs.target_branch }}
+    permissions:
+      contents: write
+      packages: write

@@ -1,0 +1,86 @@
+name: Update Major Tag
+
+# Whenever a `vX.Y.Z` tag is pushed (or this workflow is dispatched
+# manually with a version), force-move the matching `vX` floating tag to
+# the same commit. This lets consumers track `@v1` and automatically pick
+# up every non-breaking release within the same major line, while still
+# allowing strict pinning via `@v1.2.3`.
+#
+# Breaking changes intentionally bump the major segment, so the previous
+# `vX` tag stops moving and a new `v(X+1)` floating tag is created on the
+# first release of the new major line.
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to align the major tag with (without `v` prefix, e.g. `1.2.3`).'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  update_major_tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve source tag
+        id: resolve
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+            VERSION="${VERSION#v}"
+            SOURCE_TAG="v${VERSION}"
+          else
+            SOURCE_TAG="${GITHUB_REF#refs/tags/}"
+          fi
+
+          if [[ ! "$SOURCE_TAG" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            echo "::error::Source tag '$SOURCE_TAG' is not in the form vX.Y.Z; refusing to move a major tag."
+            exit 1
+          fi
+
+          MAJOR="${BASH_REMATCH[1]}"
+          MAJOR_TAG="v${MAJOR}"
+
+          if ! git rev-parse "$SOURCE_TAG" >/dev/null 2>&1; then
+            echo "::error::Source tag '$SOURCE_TAG' does not exist in this repository."
+            exit 1
+          fi
+
+          SHA="$(git rev-list -n 1 "$SOURCE_TAG")"
+
+          {
+            echo "source_tag=$SOURCE_TAG"
+            echo "major_tag=$MAJOR_TAG"
+            echo "sha=$SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Force-move major tag
+        env:
+          SOURCE_TAG: ${{ steps.resolve.outputs.source_tag }}
+          MAJOR_TAG: ${{ steps.resolve.outputs.major_tag }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global user.name "github-actions[bot]"
+
+          echo "Aligning $MAJOR_TAG with $SOURCE_TAG ($SHA)"
+
+          git tag -f "$MAJOR_TAG" "$SHA"
+          git push origin "refs/tags/${MAJOR_TAG}" --force
+
+          echo "::notice::Moved ${MAJOR_TAG} to ${SHA} (from ${SOURCE_TAG})."
