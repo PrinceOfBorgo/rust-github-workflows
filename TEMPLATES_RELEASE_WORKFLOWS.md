@@ -1,6 +1,7 @@
+<!-- omit from toc -->
 # Templates for Using the Rust Release Workflows
 
-This file provides copy-paste templates for common Rust project layouts.
+This file provides copy-paste templates for common Rust project layouts. Each template title contains links to the corresponding yml template file under the [templates](templates) folder.
 
 > **Prerequisites for every template**
 >
@@ -11,9 +12,31 @@ This file provides copy-paste templates for common Rust project layouts.
 > - Examples below track the floating major tag `@v1`, which is automatically force-moved to every new `vX.Y.Z` release within the same major line. Use the full `@v1.2.3` form instead when you need strict pinning; breaking changes always move to a new major (`v2`).
 > - Templates 1-3 use the **granular** workflows so you can add custom build steps. Templates 4-6 use the **orchestrators** (`release.yml`, `release-binaries.yml`, `release-docker.yml`) when the standard pipeline is enough.
 
+<!-- omit from toc -->
+## Table of Contents
+
+- [Templates](#templates)
+  - [Template 1: Single-Crate Rust Project](#template-1-single-crate-rust-project)
+  - [Template 2: Cargo Workspace / Non-Root Crate](#template-2-cargo-workspace--non-root-crate)
+  - [Template 3: Rust Project with Build Artifacts](#template-3-rust-project-with-build-artifacts)
+  - [Template 4: Plain Release via Orchestrator (`release.yml`)](#template-4-plain-release-via-orchestrator-releaseyml)
+  - [Template 5: Release with Docker Image via Orchestrator (`release-docker.yml`)](#template-5-release-with-docker-image-via-orchestrator-release-dockeryml)
+  - [Template 6: Release with Prebuilt Binaries via Orchestrator (`release-binaries.yml`)](#template-6-release-with-prebuilt-binaries-via-orchestrator-release-binariesyml)
+- [Customization Points](#customization-points)
+  - [Modify Commit Detection](#modify-commit-detection)
+  - [Change Target Branch](#change-target-branch)
+  - [Add Release Validation](#add-release-validation)
+  - [Customize Auto-Snapshot Opening (or Disable It)](#customize-auto-snapshot-opening-or-disable-it)
+  - [Add Rollback on Failure (Granular Templates)](#add-rollback-on-failure-granular-templates)
+  - [Manual Rollback via `workflow_dispatch`](#manual-rollback-via-workflow_dispatch)
+- [Getting Started](#getting-started)
+
+
 ---
 
-## Template 1: Single-Crate Rust Project
+## Templates
+
+### Template 1: [Single-Crate Rust Project](templates/single_crate_project.yml)
 
 ```yaml
 name: Release
@@ -75,7 +98,7 @@ jobs:
 
 ---
 
-## Template 2: Cargo Workspace / Non-Root Crate
+### Template 2: [Cargo Workspace / Non-Root Crate](templates/workspace_nonroot_crate.yml)
 
 For a Rust workspace where the released crate lives in a subdirectory. The lockfile stays at the workspace root, so `cargo_lock_path` keeps its default `Cargo.lock`:
 
@@ -92,7 +115,11 @@ env:
 jobs:
   determine_type:
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.message, '[release')
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
     outputs:
       release_type: ${{ steps.type.outputs.value }}
     steps:
@@ -146,7 +173,7 @@ jobs:
 
 ---
 
-## Template 3: Rust Project with Build Artifacts
+### Template 3: [Rust Project with Build Artifacts](templates/ship_build_artifacts.yml)
 
 For a Rust project that ships compiled binaries (or other built assets) attached to the GitHub release. The example below uses an inline build job; if the only thing your build does is compile a `--bin` and zip/tar.gz the result, prefer the dedicated [`build-package-binary.yml`](MODULAR_WORKFLOWS_GUIDE.md#2-build-package-binaryyml) granular workflow (or, for the full pipeline, jump straight to [Template 6](#template-6-release-with-prebuilt-binaries-via-orchestrator-release-binariesyml)).
 
@@ -160,7 +187,11 @@ on:
 jobs:
   determine_type:
     runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.message, '[release')
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
     outputs:
       release_type: ${{ steps.type.outputs.value }}
     steps:
@@ -229,9 +260,9 @@ jobs:
 
 ---
 
-## Template 4: Plain Release via Orchestrator (`release.yml`)
+### Template 4: [Plain Release via Orchestrator (`release.yml`)](templates/plain_release.yml)
 
-Minimal `bump → finalize → create → open-next-snapshot` pipeline for projects that don't ship extra build artifacts. The release type is inferred from the head commit message:
+Minimal `bump → finalize → create → open-next-snapshot → rollback-release (on failure)` pipeline for projects that don't ship extra build artifacts. The release type is inferred from the head commit message:
 
 ```yaml
 name: Release
@@ -267,9 +298,9 @@ For a workspace, pass the per-crate paths through:
 
 ---
 
-## Template 5: Release with Docker Image via Orchestrator (`release-docker.yml`)
+### Template 5: [Release with Docker Image via Orchestrator (`release-docker.yml`)](templates/publish_docker_image.yml)
 
-For a Rust service that publishes a Docker image to GHCR alongside the GitHub release. The orchestrator runs `bump → docker-build-push → finalize → create → open-next-snapshot`, so a failed image push aborts the release before any tag is pushed.
+For a Rust service that publishes a Docker image to GHCR alongside the GitHub release. The orchestrator runs `bump → docker-build-push → finalize → create → open-next-snapshot → rollback-release (on failure)`, so a failed image push aborts the release before any tag is pushed.
 
 ```yaml
 name: Release
@@ -293,7 +324,7 @@ jobs:
       packages: write
 ```
 
-If your `Dockerfile` consumes pre-built binaries built with `cargo-zigbuild` (the `travel-rs-bot` pattern), enable the cross-compile mode:
+If your `Dockerfile` consumes pre-built binaries built with `cargo-zigbuild`, enable the cross-compile mode:
 
 ```yaml
   release:
@@ -333,9 +364,9 @@ Pushing to a non-GHCR registry? Pass `registry`, `registry_username`, and the `r
 
 ---
 
-## Template 6: Release with Prebuilt Binaries via Orchestrator (`release-binaries.yml`)
+### Template 6: [Release with Prebuilt Binaries via Orchestrator (`release-binaries.yml`)](templates/ship_binary_archives.yml)
 
-For a Rust project that ships compiled binary archives (one or more OS/arch combos) attached to the GitHub release. The orchestrator runs `bump → build-package-binary (matrix) → finalize → create → open-next-snapshot`, fans the build out across the configured `targets`, and auto-attaches the resulting archives to the `vX.Y.Z` release.
+For a Rust project that ships compiled binary archives (one or more OS/arch combos) attached to the GitHub release. The orchestrator runs `bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)`, fans the build out across the configured `targets`, and auto-attaches the resulting archives to the `vX.Y.Z` release.
 
 ```yaml
 name: Release
@@ -472,7 +503,7 @@ open_next:
 
 ### Add Rollback on Failure (Granular Templates)
 
-The orchestrator workflows (Templates 4 and 5) already wire a rollback job with `if: failure()`. If you're composing the **granular** workflows yourself (Templates 1-3), you can opt into the same behavior by appending a rollback job that depends on every other release job:
+The orchestrator workflows (Templates 4-6) already wire a rollback job with `if: failure()`. If you're composing the **granular** workflows yourself (Templates 1-3), you can opt into the same behavior by appending a rollback job that depends on every other release job:
 
 ```yaml
   rollback:

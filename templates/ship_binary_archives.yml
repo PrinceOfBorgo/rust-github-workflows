@@ -1,0 +1,48 @@
+# For a Rust project that ships compiled binary archives (one or more OS/arch
+# combos) attached to the GitHub release.
+#
+# The orchestrator runs
+# `bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)`,
+# fans the build out across the configured `targets`, and auto-attaches the
+# resulting archives to the `vX.Y.Z` release.
+#
+# The default asset filename for each entry is 
+# `<bin_name>-<version>-<arch_label>-<os_label>.<archive_format>` (e.g. 
+# `my-app-1.2.3-x86_64-linux.tar.gz`); pass `asset_name` on a per-target entry
+# to override.
+#
+# Per-target features can be enabled by passing `cargo_build_args` (e.g. 
+# `--features tls`) on a per-target entry.
+#
+# For single-platform releases, drop the matrix to a single entry.
+
+
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  release:
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v1
+    with:
+      bin_name: my-app
+      additional_files: |
+        README.md
+        LICENSE
+      targets: |
+        [
+          {"os_label":"linux","arch_label":"x86_64","runs_on":"ubuntu-latest","rust_target":"x86_64-unknown-linux-gnu","archive_format":"tar.gz","cargo_build_args":"--features tls"},
+          {"os_label":"windows","arch_label":"x86_64","runs_on":"windows-latest","rust_target":"x86_64-pc-windows-msvc","archive_format":"zip"},
+          {"os_label":"macos","arch_label":"aarch64","runs_on":"macos-latest","rust_target":"aarch64-apple-darwin","archive_format":"tar.gz"}
+        ]
+      ### For a workspace, uncomment and pass the per-crate path below
+      # cargo_toml_path: crates/my-app/Cargo.toml
+    permissions:
+      contents: write

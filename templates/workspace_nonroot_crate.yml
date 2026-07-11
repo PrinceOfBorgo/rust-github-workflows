@@ -1,0 +1,75 @@
+# This workflow is designed to handle releases for a Rust crate that is not
+# located in the root of the repository. It will bump the version, update the
+# changelog, create a release, and open a new snapshot version.
+#
+# For this workflow to work, you need to set the `MAIN_CRATE_DIR` environment
+# variable to the path of the crate you want to release. For example, if your
+# crate is located in `crates/my-crate`, you would set `MAIN_CRATE_DIR` to
+# `crates/my-crate`.
+
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  MAIN_CRATE_DIR: crates/my-crate
+
+jobs:
+  determine_type:
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
+    outputs:
+      release_type: ${{ steps.type.outputs.value }}
+    steps:
+      - name: Determine release type
+        id: type
+        run: |
+          MSG="${{ github.event.head_commit.message }}"
+          [[ "$MSG" == *"[release:major]"* ]] && echo "value=major" >> "$GITHUB_OUTPUT" || \
+          [[ "$MSG" == *"[release:minor]"* ]] && echo "value=minor" >> "$GITHUB_OUTPUT" || \
+          echo "value=patch" >> "$GITHUB_OUTPUT"
+
+  bump_version:
+    needs: determine_type
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
+    with:
+      cargo_toml_path: ${{ env.MAIN_CRATE_DIR }}/Cargo.toml
+      changelog_path: ${{ env.MAIN_CRATE_DIR }}/CHANGELOG.md
+      release_type: ${{ needs.determine_type.outputs.release_type }}
+    permissions:
+      contents: write
+
+  finalize:
+    needs: bump_version
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
+    with:
+      version: ${{ needs.bump_version.outputs.new_version }}
+      cargo_toml_path: ${{ env.MAIN_CRATE_DIR }}/Cargo.toml
+      changelog_path: ${{ env.MAIN_CRATE_DIR }}/CHANGELOG.md
+    permissions:
+      contents: write
+
+  create_release:
+    needs: [finalize, bump_version]
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
+    with:
+      version: ${{ needs.bump_version.outputs.new_version }}
+      changelog_section_heading: ${{ needs.bump_version.outputs.changelog_section_heading }}
+      changelog_path: ${{ env.MAIN_CRATE_DIR }}/CHANGELOG.md
+    permissions:
+      contents: write
+
+  open_next:
+    needs: [finalize, create_release]
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1
+    with:
+      cargo_toml_path: ${{ env.MAIN_CRATE_DIR }}/Cargo.toml
+      changelog_path: ${{ env.MAIN_CRATE_DIR }}/CHANGELOG.md
+    permissions:
+      contents: write

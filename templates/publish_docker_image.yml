@@ -1,0 +1,47 @@
+# This workflow is designed to handle releases for a Rust project that
+# publishes a Docker image to GHCR alongside the GitHub release.
+#
+# The orchestrator runs 
+# `bump → docker-build-push → finalize → create → open-next-snapshot → rollback-release (on failure)`,
+# so a failed image push aborts the release before any tag is pushed.
+
+name: Release
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  release:
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1
+    with:
+      platforms: linux/amd64,linux/arm64
+    ### If your Dockerfile consumes pre-built binaries built with cargo-zigbuild, enable
+    ### the cross-compile using the lines below and adjusting the arguments
+    # with:
+    #   platforms: linux/amd64,linux/arm64,linux/arm/v7
+    #   cargo_zigbuild: 'true'
+    #   rust_targets: |
+    #     x86_64-unknown-linux-musl
+    #     aarch64-unknown-linux-musl
+    #     armv7-unknown-linux-musleabihf
+    #   build_args: |
+    #     BIN_PATH_AMD64=target/x86_64-unknown-linux-musl/release/my-app
+    #     BIN_PATH_ARM64=target/aarch64-unknown-linux-musl/release/my-app
+    #     BIN_PATH_ARMV7=target/armv7-unknown-linux-musleabihf/release/my-app
+    ### If you want to push to Docker Hub instead of GHCR, enable the lines below 
+    ### and adjust the arguments
+    # with:
+    #   registry: docker.io
+    #   image_name: myorg/my-app
+    #   registry_username: ${{ vars.DOCKER_HUB_USER }}
+    # secrets:
+    #   registry_password: ${{ secrets.DOCKER_HUB_TOKEN }}
+    permissions:
+      contents: write
+      packages: write

@@ -13,31 +13,31 @@ Reusable GitHub Actions workflows for automating releases of **Rust projects** a
 
 Granular reusable workflows (compose them yourself when you need extra build steps):
 
-- `.github/workflows/bump-version.yml`
-- `.github/workflows/build-package-binary.yml`
-- `.github/workflows/docker-build-push.yml`
-- `.github/workflows/finalize-release.yml`
-- `.github/workflows/create-release.yml`
-- `.github/workflows/open-next-snapshot.yml`
-- `.github/workflows/rollback-release.yml`
+- [`.github/workflows/bump-version.yml`](.github/workflows/bump-version.yml)
+- [`.github/workflows/build-package-binary.yml`](.github/workflows/build-package-binary.yml)
+- [`.github/workflows/docker-build-push.yml`](.github/workflows/docker-build-push.yml)
+- [`.github/workflows/finalize-release.yml`](.github/workflows/finalize-release.yml)
+- [`.github/workflows/create-release.yml`](.github/workflows/create-release.yml)
+- [`.github/workflows/open-next-snapshot.yml`](.github/workflows/open-next-snapshot.yml)
+- [`.github/workflows/rollback-release.yml`](.github/workflows/rollback-release.yml)
 
 Orchestrator workflows (call once to run a pre-wired pipeline, including automatic rollback on failure):
 
-- `.github/workflows/release.yml` — `bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
-- `.github/workflows/release-binaries.yml` — `bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)` (matrix-builds and packages one or more Rust binaries and attaches the archives to the GitHub release)
-- `.github/workflows/release-docker.yml` — `bump → docker-build-push → finalize → create → open-next-snapshot → rollback-release (on failure)` (rollback will also delete the pushed Docker image)
+- [`.github/workflows/release.yml`](.github/workflows/release.yml) — `bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
+- [`.github/workflows/release-binaries.yml`](.github/workflows/release-binaries.yml) — `bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)` (matrix-builds and packages one or more Rust binaries and attaches the archives to the GitHub release)
+- [`.github/workflows/release-docker.yml`](.github/workflows/release-docker.yml) — `bump → docker-build-push → finalize → create → open-next-snapshot → rollback-release (on failure)` (rollback will also delete the pushed Docker image)
 
 Repository maintenance workflows (run on **this** repo only — not callable from consumers; prefixed with `_` so they sort separately in the file tree and the **Actions** tab):
 
-- `.github/workflows/_update-major-tag.yml` — keeps the floating major tag (`v1`, `v2`, ...) aligned with the latest `vX.Y.Z` release. See the [Versioning Policy](#versioning-policy) section.
+- [`.github/workflows/_update-major-tag.yml`](.github/workflows/_update-major-tag.yml) — keeps the floating major tag (`v1`, `v2`, ...) aligned with the latest `vX.Y.Z` release. See the [Versioning Policy](#versioning-policy) section.
 
 Documentation:
 
-- `MODULAR_WORKFLOWS_GUIDE.md`
-- `TEMPLATES_RELEASE_WORKFLOWS.md`
-- `CHANGELOG.template.md`
+- [`MODULAR_WORKFLOWS_GUIDE.md`](MODULAR_WORKFLOWS_GUIDE.md)
+- [`TEMPLATES_RELEASE_WORKFLOWS.md`](TEMPLATES_RELEASE_WORKFLOWS.md)
+- [`CHANGELOG.template.md`](CHANGELOG.template.md)
 
-Use `MODULAR_WORKFLOWS_GUIDE.md` as the primary documentation, `TEMPLATES_RELEASE_WORKFLOWS.md` for copy-paste workflow examples, and `CHANGELOG.template.md` as the starting point for your project's `CHANGELOG.md`.
+Use `MODULAR_WORKFLOWS_GUIDE.md` as the primary documentation, `TEMPLATES_RELEASE_WORKFLOWS.md` for copy-paste workflow examples (also contained in [templates](templates) folder as yml files), and `CHANGELOG.template.md` as the starting point for your project's `CHANGELOG.md`.
 
 ## Quick Start
 
