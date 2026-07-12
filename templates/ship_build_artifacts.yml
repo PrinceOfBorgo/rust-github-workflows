@@ -17,26 +17,11 @@ on:
 
 jobs:
   determine_type:
-    runs-on: ubuntu-latest
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    outputs:
-      release_type: ${{ steps.type.outputs.value }}
-    steps:
-      - name: Determine release type
-        id: type
-        run: |
-          MSG="${{ github.event.head_commit.message }}"
-          [[ "$MSG" == *"[release:major]"* ]] && echo "value=major" >> "$GITHUB_OUTPUT" || \
-          [[ "$MSG" == *"[release:minor]"* ]] && echo "value=minor" >> "$GITHUB_OUTPUT" || \
-          echo "value=patch" >> "$GITHUB_OUTPUT"
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/determine-release-type.yml@v2
 
   bump_version:
     needs: determine_type
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v2
     with:
       release_type: ${{ needs.determine_type.outputs.release_type }}
     permissions:
@@ -66,7 +51,7 @@ jobs:
 
   finalize:
     needs: [bump_version, build]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
     permissions:
@@ -74,7 +59,7 @@ jobs:
 
   create_release:
     needs: [finalize, bump_version, build]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_version.outputs.changelog_section_heading }}
@@ -84,6 +69,6 @@ jobs:
 
   open_next:
     needs: [finalize, create_release]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v2
     permissions:
       contents: write

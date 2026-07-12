@@ -1,0 +1,51 @@
+name: Reusable Workflow - Determine Release Type
+
+# Parses the head commit message for a release tag and exposes the resulting
+# release type as an output.
+#
+# Recognised tags (matched as substrings):
+#   * `[release]`, `[release:patch]`, `[release:fix]`  -> `patch`
+#   * `[release:minor]`                                -> `minor`
+#   * `[release:major]`                                -> `major`
+#
+# If the commit message contains none of the tags above, the internal job is
+# skipped via its `if:` guard. Because a reusable-workflow call inherits the
+# result of its inner job(s), the caller's `uses:` job is skipped as well,
+# and every job that `needs:` it cascades to skipped automatically - so
+# callers don't have to repeat the guard on every downstream job.
+#
+# When called from another workflow the `github.event` context is inherited
+# from the top-level triggering event, so `github.event.head_commit.message`
+# resolves to the commit that triggered the caller's `push`.
+
+on:
+  workflow_call:
+    outputs:
+      release_type:
+        description: 'Release type parsed from the head commit message: `major`, `minor`, or `patch`. Not set when no recognised release tag is present (in which case this workflow and every downstream job that `needs:` it are skipped).'
+        value: ${{ jobs.determine.outputs.release_type }}
+
+jobs:
+  determine:
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.head_commit.message, '[release]') ||
+      contains(github.event.head_commit.message, '[release:fix]') ||
+      contains(github.event.head_commit.message, '[release:patch]') ||
+      contains(github.event.head_commit.message, '[release:minor]') ||
+      contains(github.event.head_commit.message, '[release:major]')
+    outputs:
+      release_type: ${{ steps.determine.outputs.type }}
+    steps:
+      - name: Determine release type
+        id: determine
+        run: |
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+          if [[ "$COMMIT_MSG" == *"[release:major]"* ]]; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif [[ "$COMMIT_MSG" == *"[release:minor]"* ]]; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
+          else
+            # `[release]`, `[release:patch]`, `[release:fix]` all map to patch.
+            echo "type=patch" >> "$GITHUB_OUTPUT"
+          fi

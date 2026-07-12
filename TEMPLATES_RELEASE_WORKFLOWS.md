@@ -9,7 +9,7 @@ This file provides copy-paste templates for common Rust project layouts. Each te
 > - `CHANGELOG.md` with an unreleased placeholder line of the form `## [X.Y.Z-SNAPSHOT]` (copy [`CHANGELOG.template.md`](CHANGELOG.template.md) as a starting point)
 > - Default branch is `main` (or pass `target_branch:` to `finalize-release.yml` and `create-release.yml`)
 > - `Cargo.lock` defaults to the repo root. Override with `cargo_lock_path` for non-standard layouts, or pass `cargo_lock_path: ''` for libraries that don't commit a lockfile.
-> - Examples below track the floating major tag `@v1`, which is automatically force-moved to every new `vX.Y.Z` release within the same major line. Use the full `@v1.2.3` form instead when you need strict pinning; breaking changes always move to a new major (`v2`).
+> - Examples below track the floating major tag `@v2`, which is automatically force-moved to every new `vX.Y.Z` release within the same major line. Use the full `@v2.0.0` form instead when you need strict pinning; breaking changes always move to a new major (`v3`).
 > - Templates 1-3 use the **granular** workflows so you can add custom build steps. Templates 4-6 use the **orchestrators** (`release.yml`, `release-binaries.yml`, `release-docker.yml`) when the standard pipeline is enough.
 
 <!-- omit from toc -->
@@ -47,26 +47,11 @@ on:
 
 jobs:
   determine_type:
-    runs-on: ubuntu-latest
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    outputs:
-      release_type: ${{ steps.type.outputs.value }}
-    steps:
-      - name: Determine release type
-        id: type
-        run: |
-          MSG="${{ github.event.head_commit.message }}"
-          [[ "$MSG" == *"[release:major]"* ]] && echo "value=major" >> "$GITHUB_OUTPUT" || \
-          [[ "$MSG" == *"[release:minor]"* ]] && echo "value=minor" >> "$GITHUB_OUTPUT" || \
-          echo "value=patch" >> "$GITHUB_OUTPUT"
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/determine-release-type.yml@v2
 
   bump_version:
     needs: determine_type
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v2
     with:
       release_type: ${{ needs.determine_type.outputs.release_type }}
     permissions:
@@ -74,7 +59,7 @@ jobs:
 
   finalize:
     needs: bump_version
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
     permissions:
@@ -82,7 +67,7 @@ jobs:
 
   create_release:
     needs: [finalize, bump_version]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_version.outputs.changelog_section_heading }}
@@ -91,7 +76,7 @@ jobs:
 
   open_next:
     needs: [finalize, create_release]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v2
     permissions:
       contents: write
 ```
@@ -114,26 +99,11 @@ env:
 
 jobs:
   determine_type:
-    runs-on: ubuntu-latest
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    outputs:
-      release_type: ${{ steps.type.outputs.value }}
-    steps:
-      - name: Determine release type
-        id: type
-        run: |
-          MSG="${{ github.event.head_commit.message }}"
-          [[ "$MSG" == *"[release:major]"* ]] && echo "value=major" >> "$GITHUB_OUTPUT" || \
-          [[ "$MSG" == *"[release:minor]"* ]] && echo "value=minor" >> "$GITHUB_OUTPUT" || \
-          echo "value=patch" >> "$GITHUB_OUTPUT"
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/determine-release-type.yml@v2
 
   bump_version:
     needs: determine_type
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v2
     with:
       cargo_toml_path: ${{ env.MAIN_CRATE_DIR }}/Cargo.toml
       changelog_path: ${{ env.MAIN_CRATE_DIR }}/CHANGELOG.md
@@ -143,7 +113,7 @@ jobs:
 
   finalize:
     needs: bump_version
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
       cargo_toml_path: ${{ env.MAIN_CRATE_DIR }}/Cargo.toml
@@ -153,7 +123,7 @@ jobs:
 
   create_release:
     needs: [finalize, bump_version]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_version.outputs.changelog_section_heading }}
@@ -163,7 +133,7 @@ jobs:
 
   open_next:
     needs: [finalize, create_release]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v2
     with:
       cargo_toml_path: ${{ env.MAIN_CRATE_DIR }}/Cargo.toml
       changelog_path: ${{ env.MAIN_CRATE_DIR }}/CHANGELOG.md
@@ -175,7 +145,7 @@ jobs:
 
 ### Template 3: [Rust Project with Build Artifacts](templates/ship_build_artifacts.yml)
 
-For a Rust project that ships compiled binaries (or other built assets) attached to the GitHub release. The example below uses an inline build job; if the only thing your build does is compile a `--bin` and zip/tar.gz the result, prefer the dedicated [`build-package-binary.yml`](MODULAR_WORKFLOWS_GUIDE.md#2-build-package-binaryyml) granular workflow (or, for the full pipeline, jump straight to [Template 6](#template-6-release-with-prebuilt-binaries-via-orchestrator-release-binariesyml)).
+For a Rust project that ships compiled binaries (or other built assets) attached to the GitHub release. The example below uses an inline build job; if the only thing your build does is compile a `--bin` and zip/tar.gz the result, prefer the dedicated [`build-package-binary.yml`](MODULAR_WORKFLOWS_GUIDE.md#3-build-package-binaryyml) granular workflow (or, for the full pipeline, jump straight to [Template 6](#template-6-release-with-prebuilt-binaries-via-orchestrator-release-binariesyml)).
 
 ```yaml
 name: Release
@@ -186,26 +156,11 @@ on:
 
 jobs:
   determine_type:
-    runs-on: ubuntu-latest
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    outputs:
-      release_type: ${{ steps.type.outputs.value }}
-    steps:
-      - name: Determine release type
-        id: type
-        run: |
-          MSG="${{ github.event.head_commit.message }}"
-          [[ "$MSG" == *"[release:major]"* ]] && echo "value=major" >> "$GITHUB_OUTPUT" || \
-          [[ "$MSG" == *"[release:minor]"* ]] && echo "value=minor" >> "$GITHUB_OUTPUT" || \
-          echo "value=patch" >> "$GITHUB_OUTPUT"
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/determine-release-type.yml@v2
 
   bump_version:
     needs: determine_type
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v2
     with:
       release_type: ${{ needs.determine_type.outputs.release_type }}
     permissions:
@@ -235,7 +190,7 @@ jobs:
 
   finalize:
     needs: [bump_version, build]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
     permissions:
@@ -243,7 +198,7 @@ jobs:
 
   create_release:
     needs: [finalize, bump_version, build]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_version.outputs.changelog_section_heading }}
@@ -253,7 +208,7 @@ jobs:
 
   open_next:
     needs: [finalize, create_release]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v2
     permissions:
       contents: write
 ```
@@ -262,7 +217,7 @@ jobs:
 
 ### Template 4: [Plain Release via Orchestrator (`release.yml`)](templates/plain_release.yml)
 
-Minimal `bump → finalize → create → open-next-snapshot → rollback-release (on failure)` pipeline for projects that don't ship extra build artifacts. The release type is inferred from the head commit message:
+Minimal `determine-release-type → bump → finalize → create → open-next-snapshot → rollback-release (on failure)` pipeline for projects that don't ship extra build artifacts. The release type is inferred from the head commit message:
 
 ```yaml
 name: Release
@@ -273,12 +228,7 @@ on:
 
 jobs:
   release:
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v2
     permissions:
       contents: write
 ```
@@ -288,7 +238,7 @@ For a workspace, pass the per-crate paths through:
 ```yaml
   release:
     # ...
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v2
     with:
       cargo_toml_path: crates/my-crate/Cargo.toml
       changelog_path: crates/my-crate/CHANGELOG.md
@@ -300,7 +250,7 @@ For a workspace, pass the per-crate paths through:
 
 ### Template 5: [Release with Docker Image via Orchestrator (`release-docker.yml`)](templates/publish_docker_image.yml)
 
-For a Rust service that publishes a Docker image to GHCR alongside the GitHub release. The orchestrator runs `bump → docker-build-push → finalize → create → open-next-snapshot → rollback-release (on failure)`, so a failed image push aborts the release before any tag is pushed.
+For a Rust service that publishes a Docker image to GHCR alongside the GitHub release. The orchestrator runs `determine-release-type → bump → docker-build-push → finalize → create → open-next-snapshot → rollback-release (on failure)`, so a failed image push aborts the release before any tag is pushed.
 
 ```yaml
 name: Release
@@ -311,12 +261,7 @@ on:
 
 jobs:
   release:
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v2
     with:
       platforms: linux/amd64,linux/arm64
     permissions:
@@ -329,7 +274,7 @@ If your `Dockerfile` consumes pre-built binaries built with `cargo-zigbuild`, en
 ```yaml
   release:
     # ...
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v2
     with:
       platforms: linux/amd64,linux/arm64,linux/arm/v7
       cargo_zigbuild: 'true'
@@ -351,7 +296,7 @@ Pushing to a non-GHCR registry? Pass `registry`, `registry_username`, and the `r
 ```yaml
   release:
     # ...
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v2
     with:
       registry: docker.io
       image_name: myorg/my-app
@@ -366,7 +311,7 @@ Pushing to a non-GHCR registry? Pass `registry`, `registry_username`, and the `r
 
 ### Template 6: [Release with Prebuilt Binaries via Orchestrator (`release-binaries.yml`)](templates/ship_binary_archives.yml)
 
-For a Rust project that ships compiled binary archives (one or more OS/arch combos) attached to the GitHub release. The orchestrator runs `bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)`, fans the build out across the configured `targets`, and auto-attaches the resulting archives to the `vX.Y.Z` release.
+For a Rust project that ships compiled binary archives (one or more OS/arch combos) attached to the GitHub release. The orchestrator runs `determine-release-type → bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)`, fans the build out across the configured `targets`, and auto-attaches the resulting archives to the `vX.Y.Z` release.
 
 ```yaml
 name: Release
@@ -377,12 +322,7 @@ on:
 
 jobs:
   release:
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v2
     with:
       bin_name: my-app
       additional_files: |
@@ -405,7 +345,7 @@ Single-platform release (drop the matrix to a single entry):
 ```yaml
   release:
     # ...
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v2
     with:
       bin_name: my-app
       targets: |
@@ -421,7 +361,7 @@ Workspace project with per-target features:
 ```yaml
   release:
     # ...
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v2
     with:
       bin_name: my-app
       cargo_toml_path: crates/my-app/Cargo.toml
@@ -440,24 +380,21 @@ Workspace project with per-target features:
 ## Customization Points
 
 ### Modify Commit Detection
-Change this condition in any template to match your git commit convention:
-```yaml
-if: |
-  contains(github.event.head_commit.message, '[release]') ||
-  contains(github.event.head_commit.message, '[release:patch]')
-```
+The recognised release tags (`[release]`, `[release:fix]`, `[release:patch]`, `[release:minor]`, `[release:major]`) are hard-coded in [`determine-release-type.yml`](.github/workflows/determine-release-type.yml). That workflow gates itself on their presence and skips - cascading the skip to every downstream job that `needs:` it - when none are found. Templates therefore don't need (and don't ship with) an outer `if:` guard.
+
+To change or extend the recognised tag set, fork [`determine-release-type.yml`](.github/workflows/determine-release-type.yml) and update both its internal `if:` guard and the `case` in its script step.
 
 ### Change Target Branch
 If your default branch is not `main`, pass `target_branch:` to both `finalize-release.yml` and `create-release.yml`:
 ```yaml
 finalize:
-  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
+  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v2
   with:
     version: ${{ needs.bump_version.outputs.new_version }}
     target_branch: develop
 
 create_release:
-  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
+  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v2
   with:
     version: ${{ needs.bump_version.outputs.new_version }}
     changelog_section_heading: ${{ needs.bump_version.outputs.changelog_section_heading }}
@@ -493,7 +430,7 @@ Update the `open_next` job's `with:` section (similar to how other jobs are conf
 ```yaml
 open_next:
   needs: [finalize, create_release]
-  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1
+  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v2
   with:
     cargo_toml_path: crates/my-crate/Cargo.toml
     changelog_path: crates/my-crate/CHANGELOG.md
@@ -509,7 +446,7 @@ The orchestrator workflows (Templates 4-6) already wire a rollback job with `if:
   rollback:
     if: failure() && needs.bump_version.outputs.new_version != ''
     needs: [bump_version, finalize, create_release]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
       delete_github_release: 'true'
@@ -525,7 +462,7 @@ For a Docker-publishing pipeline, also pass `delete_container_image: 'true'` (an
   rollback:
     if: failure() && needs.bump_version.outputs.new_version != ''
     needs: [bump_version, build_and_push_docker, finalize, create_release]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v2
     with:
       version: ${{ needs.bump_version.outputs.new_version }}
       delete_github_release: 'true'
@@ -559,7 +496,7 @@ on:
 
 jobs:
   rollback:
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v2
     with:
       version: ${{ inputs.version }}
       delete_container_image: ${{ inputs.delete_container_image }}
@@ -579,4 +516,4 @@ jobs:
 3. **Ensure `CHANGELOG.md` has a `## [X.Y.Z-SNAPSHOT]` placeholder** that the bump workflow can rewrite (copy [`CHANGELOG.template.md`](CHANGELOG.template.md) as `CHANGELOG.md` to get a ready-made scaffold)
 4. **Adjust `cargo_toml_path` / `changelog_path`** if your crate is not at the repo root
 5. **Test with a `[release:patch]` commit to `main`**
-6. **Track the floating major tag** (e.g. `@v1`) for automatic non-breaking updates, or use the full `@v1.2.3` form for strict pinning
+6. **Track the floating major tag** (e.g. `@v2`) for automatic non-breaking updates, or use the full `@v2.0.0` form for strict pinning

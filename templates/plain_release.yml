@@ -1,4 +1,4 @@
-# Minimal `bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
+# Minimal `determine-release-type → bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
 # pipeline for projects that don't ship extra build artifacts. The release type
 # is inferred from the head commit message.
 
@@ -10,12 +10,7 @@ on:
 
 jobs:
   release:
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v2
     ### For a workspace, uncomment and pass the per-crate paths below
     # with:
     #   cargo_toml_path: crates/my-crate/Cargo.toml

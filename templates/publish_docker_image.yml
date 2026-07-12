@@ -2,7 +2,7 @@
 # publishes a Docker image to GHCR alongside the GitHub release.
 #
 # The orchestrator runs 
-# `bump → docker-build-push → finalize → create → open-next-snapshot → rollback-release (on failure)`,
+# `determine-release-type → bump → docker-build-push → finalize → create → open-next-snapshot → rollback-release (on failure)`,
 # so a failed image push aborts the release before any tag is pushed.
 
 name: Release
@@ -13,12 +13,7 @@ on:
 
 jobs:
   release:
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v2
     with:
       platforms: linux/amd64,linux/arm64
     ### If your Dockerfile consumes pre-built binaries built with cargo-zigbuild, enable

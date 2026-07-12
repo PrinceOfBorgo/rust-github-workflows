@@ -13,22 +13,58 @@ This guide explains how to use the reusable GitHub Actions workflows for managin
 
 The repository ships two layers of reusable workflows:
 
-- **Granular workflows** (one job each) — building blocks you compose yourself when the consumer pipeline needs custom steps:
-    - [`bump-version.yml`](#1-bump-versionyml)
-    - [`build-package-binary.yml`](#2-build-package-binaryyml)
-    - [`docker-build-push.yml`](#3-docker-build-pushyml)
-    - [`finalize-release.yml`](#4-finalize-releaseyml)
-    - [`create-release.yml`](#5-create-releaseyml)
-    - [`open-next-snapshot.yml`](#6-open-next-snapshotyml)
-    - [`rollback-release.yml`](#7-rollback-releaseyml)
-- **Orchestrators** — chain the granular ones for the most common pipelines (with automatic rollback on failure):
-    - [`release.yml`](#8-releaseyml) — `bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
-    - [`release-binaries.yml`](#9-release-binariesyml) — `bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)`
-    - [`release-docker.yml`](#10-release-dockeryml) — same as `release.yml` but with a Docker build/push between bump and finalize
+- **Granular workflows** (one job each) - building blocks you compose yourself when the consumer pipeline needs custom steps:
+    - [`determine-release-type.yml`](#1-determine-release-typeyml)
+    - [`bump-version.yml`](#2-bump-versionyml)
+    - [`build-package-binary.yml`](#3-build-package-binaryyml)
+    - [`docker-build-push.yml`](#4-docker-build-pushyml)
+    - [`finalize-release.yml`](#5-finalize-releaseyml)
+    - [`create-release.yml`](#6-create-releaseyml)
+    - [`open-next-snapshot.yml`](#7-open-next-snapshotyml)
+    - [`rollback-release.yml`](#8-rollback-releaseyml)
+- **Orchestrators** - chain the granular ones for the most common pipelines (with automatic rollback on failure):
+    - [`release.yml`](#9-releaseyml) - `determine-release-type → bump → finalize → create → open-next-snapshot → rollback-release (on failure)`
+    - [`release-binaries.yml`](#10-release-binariesyml) - `determine-release-type → bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)`
+    - [`release-docker.yml`](#11-release-dockeryml) - same as `release.yml` but with a Docker build/push between bump and finalize
 
 Use an orchestrator when you don't need extra build steps; otherwise compose the granular workflows yourself.
 
-### 1. **bump-version.yml**
+### 1. **determine-release-type.yml**
+Parses the head commit message for a release tag and exposes the resulting release type as an output.
+
+Recognised tags (case-insensitive substring match):
+
+- `[release]`, `[release:patch]`, `[release:fix]` → `patch`
+- `[release:minor]` → `minor`
+- `[release:major]` → `major`
+
+If the commit message contains none of the tags above, the workflow's internal job is skipped via its own `if:` guard. Because a reusable-workflow call inherits its inner job's result, the caller's `uses:` job is skipped too, and every job that `needs:` it cascades to skipped automatically - so callers don't have to repeat the check.
+
+**Inputs:** _(none)_ - reads `${{ github.event.head_commit.message }}` from the caller's triggering event.
+
+**Outputs:**
+- `release_type` - One of `major`, `minor`, `patch`. Not set when no recognised release tag is present (in which case this workflow and every downstream job are skipped).
+
+**Usage:**
+```yaml
+jobs:
+  determine_type:
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/determine-release-type.yml@v2
+
+  bump_version:
+    needs: determine_type
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v2
+    with:
+      release_type: ${{ needs.determine_type.outputs.release_type }}
+    permissions:
+      contents: write
+```
+
+No outer `if:` guard is needed on the calling job - the reusable workflow's internal `if:` handles it. On a push without any of the recognised tags, the workflow's inner job is skipped, the caller's `uses:` job is skipped in turn, and every downstream `needs:` cascades to skipped automatically. The workflow run still appears in the Actions tab as "skipped", but no consumer wiring is required.
+
+---
+
+### 2. **bump-version.yml**
 Bumps the Cargo crate version (major/minor/patch) using `cargo set-version` and rewrites the `## [X.Y.Z-SNAPSHOT]` line in `CHANGELOG.md` with the new version and date.
 
 **Inputs:**
@@ -43,15 +79,15 @@ Bumps the Cargo crate version (major/minor/patch) using `cargo set-version` and 
 
 **Usage:**
 ```yaml
-uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v2
 with:
   release_type: ${{ env.RELEASE_TYPE }}
 ```
 
 ---
 
-### 2. **build-package-binary.yml**
-Builds a single Rust binary (optionally for a non-native target) and packages it into a release-ready archive (`.zip` or `.tar.gz`). The archive is uploaded as a workflow artifact named `artifact_name` so that `create-release.yml`'s `download-artifact` step lands it at `release-assets/<artifact_name>/<asset_name>` — the exact path you pass to `create-release.yml`'s `release_assets` input.
+### 3. **build-package-binary.yml**
+Builds a single Rust binary (optionally for a non-native target) and packages it into a release-ready archive (`.zip` or `.tar.gz`). The archive is uploaded as a workflow artifact named `artifact_name` so that `create-release.yml`'s `download-artifact` step lands it at `release-assets/<artifact_name>/<asset_name>` - the exact path you pass to `create-release.yml`'s `release_assets` input.
 
 Sensible defaults are computed from `bin_name`, `version`, `os_label`, `arch_label`, and `archive_format`, so the most common case requires no extra wiring; pass `artifact_name` / `asset_name` to override.
 
@@ -80,7 +116,7 @@ Sensible defaults are computed from `bin_name`, `version`, `os_label`, `arch_lab
 ```yaml
 build_linux:
   needs: bump_version
-  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/build-package-binary.yml@v1
+  uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/build-package-binary.yml@v2
   with:
     version: ${{ needs.bump_version.outputs.new_version }}
     bin_name: my-app
@@ -96,11 +132,11 @@ build_linux:
 
 ---
 
-### 3. **docker-build-push.yml**
+### 4. **docker-build-push.yml**
 Builds a (multi-arch) Docker image and pushes it to a container registry. Two modes:
 
-- **Plain Docker build** (default) — just runs `docker/setup-buildx-action`, `docker/login-action`, and `docker/build-push-action` against the configured `dockerfile`/`context`/`platforms`.
-- **Rust cross-compile** (`cargo_zigbuild: 'true'`) — also installs the Rust toolchain plus zig and `cargo-zigbuild` and builds every entry of `rust_targets` before the Docker build, so a `Dockerfile` that copies pre-built binaries via build-args (e.g. `BIN_PATH_AMD64=target/x86_64-unknown-linux-musl/release/<bin>`) works out of the box.
+- **Plain Docker build** (default) - just runs `docker/setup-buildx-action`, `docker/login-action`, and `docker/build-push-action` against the configured `dockerfile`/`context`/`platforms`.
+- **Rust cross-compile** (`cargo_zigbuild: 'true'`) - also installs the Rust toolchain plus zig and `cargo-zigbuild` and builds every entry of `rust_targets` before the Docker build, so a `Dockerfile` that copies pre-built binaries via build-args (e.g. `BIN_PATH_AMD64=target/x86_64-unknown-linux-musl/release/<bin>`) works out of the box.
 
 **Inputs (most common):**
 - `version` (optional, default: empty) - When set, pushes `<image>:v<version>`
@@ -127,7 +163,7 @@ Builds a (multi-arch) Docker image and pushes it to a container registry. Two mo
 
 **Usage:**
 ```yaml
-uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/docker-build-push.yml@v1
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/docker-build-push.yml@v2
 with:
   version: ${{ needs.bump_version.outputs.new_version }}
   platforms: linux/amd64,linux/arm64
@@ -138,7 +174,7 @@ permissions:
 
 ---
 
-### 4. **finalize-release.yml**
+### 5. **finalize-release.yml**
 Commits the updated `Cargo.toml`, `Cargo.lock` (when present), and `CHANGELOG.md`, creates a `vX.Y.Z` git tag, and pushes to the target branch.
 
 **Inputs:**
@@ -151,14 +187,14 @@ Commits the updated `Cargo.toml`, `Cargo.lock` (when present), and `CHANGELOG.md
 
 **Usage:**
 ```yaml
-- uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
+- uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v2
   with:
     version: ${{ needs.prepare.outputs.new_version }}
 ```
 
 ---
 
-### 5. **create-release.yml**
+### 6. **create-release.yml**
 Creates a GitHub release with auto-generated notes and optional asset attachments.
 
 **Inputs:**
@@ -171,7 +207,7 @@ Creates a GitHub release with auto-generated notes and optional asset attachment
 
 **Usage:**
 ```yaml
-- uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
+- uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v2
   with:
     version: ${{ needs.prepare.outputs.new_version }}
     changelog_section_heading: ${{ needs.prepare.outputs.changelog_section_heading }}
@@ -180,7 +216,7 @@ Creates a GitHub release with auto-generated notes and optional asset attachment
 
 ---
 
-### 6. **open-next-snapshot.yml**
+### 7. **open-next-snapshot.yml**
 Automatically opens the next development iteration after a release by bumping the Cargo version to `X.Y.(Z+1)-SNAPSHOT` and prepending a new snapshot section to the CHANGELOG.
 
 **Inputs:**
@@ -195,14 +231,14 @@ Automatically opens the next development iteration after a release by bumping th
 
 **Usage:**
 ```yaml
-uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v1
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/open-next-snapshot.yml@v2
 with:
   # Optional: can customize paths and branch if needed
 ```
 
 ---
 
-### 7. **rollback-release.yml**
+### 8. **rollback-release.yml**
 Best-effort cleanup of a release that failed mid-pipeline. Tries to:
 
 1. Delete the `vX.Y.Z` GitHub release (if it was created).
@@ -232,7 +268,7 @@ on:
 
 jobs:
   rollback:
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/rollback-release.yml@v2
     with:
       version: ${{ inputs.version }}
       delete_container_image: 'true'
@@ -243,7 +279,7 @@ jobs:
 
 ---
 
-### 8. **release.yml**
+### 9. **release.yml**
 Orchestrator that chains `bump-version → finalize-release → create-release → open-next-snapshot`. The release type (`major`/`minor`/`patch`) is inferred from the head commit message tag (`[release:major]`, `[release:minor]`, `[release:patch]`, or `[release]` → patch).
 
 Use this when the only artifacts attached to the release are the auto-generated notes and the CHANGELOG section. If you need to build extra artifacts (binaries, deploy bundles, etc.), compose the granular workflows directly instead.
@@ -264,8 +300,7 @@ Use this when the only artifacts attached to the release are the auto-generated 
 ```yaml
 jobs:
   release:
-    if: contains(github.event.head_commit.message, '[release')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release.yml@v2
     permissions:
       contents: write
 ```
@@ -274,7 +309,7 @@ If any job in the chain fails, an `if: failure()` rollback job runs `rollback-re
 
 ---
 
-### 9. **release-binaries.yml**
+### 10. **release-binaries.yml**
 Orchestrator that chains `bump-version → build-package-binary (matrix) → finalize-release → create-release → open-next-snapshot`. Build/package is fanned out over a JSON `targets` matrix; the resulting archive paths are auto-collected and forwarded to `create-release.yml`'s `release_assets`, so the archives are attached to the `vX.Y.Z` GitHub release. The release type (`major`/`minor`/`patch`) is inferred from the head commit message tag.
 
 Use this when your release ships pre-built binaries (one or more OS/arch combos) and the per-target wiring of [Template 6](TEMPLATES_RELEASE_WORKFLOWS.md#template-6-release-with-prebuilt-binaries-via-orchestrator-release-binariesyml) covers your build needs. If you need exotic per-target build logic (cross-compile via zigbuild, custom toolchains, etc.) compose the granular workflows directly instead.
@@ -302,8 +337,7 @@ Use this when your release ships pre-built binaries (one or more OS/arch combos)
 ```yaml
 jobs:
   release:
-    if: contains(github.event.head_commit.message, '[release')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v2
     with:
       bin_name: my-app
       targets: |
@@ -320,7 +354,7 @@ If any job in the chain fails (including any matrix build), an `if: failure()` r
 
 ---
 
-### 10. **release-docker.yml**
+### 11. **release-docker.yml**
 Orchestrator that chains `bump-version → docker-build-push → finalize-release → create-release → open-next-snapshot`. The Docker image is tagged with `:v<new_version>` (and `:latest` when `push_latest=true`) and pushed to the configured registry **before** finalize, so a failed image push aborts the release before any tag/commit is pushed.
 
 **Inputs:** all of `release.yml`'s inputs plus all of `docker-build-push.yml`'s inputs (see those sections for details).
@@ -339,8 +373,7 @@ Orchestrator that chains `bump-version → docker-build-push → finalize-releas
 ```yaml
 jobs:
   release:
-    if: contains(github.event.head_commit.message, '[release')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-docker.yml@v2
     with:
       platforms: linux/amd64,linux/arm64
     permissions:
@@ -358,7 +391,7 @@ If any job in the chain fails, an `if: failure()` rollback job runs `rollback-re
 
 Call the reusable workflows directly from this repository:
 ```yaml
-uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
+uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v2
 ```
 
 ### Step 2: Create Your Project-Specific Release Workflow
@@ -374,27 +407,12 @@ on:
 
 jobs:
   prepare:
-    runs-on: ubuntu-latest
-    if: contains(github.event.head_commit.message, '[release')
-    outputs:
-      release_type: ${{ steps.determine_type.outputs.type }}
-    steps:
-      - name: Determine release type
-        id: determine_type
-        run: |
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-          if [[ "$COMMIT_MSG" == *"[release:major]"* ]]; then
-            echo "type=major" >> "$GITHUB_OUTPUT"
-          elif [[ "$COMMIT_MSG" == *"[release:minor]"* ]]; then
-            echo "type=minor" >> "$GITHUB_OUTPUT"
-          else
-            echo "type=patch" >> "$GITHUB_OUTPUT"
-          fi
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/determine-release-type.yml@v2
 
   # Use the bump workflow from the shared repository
   bump_and_changelog:
     needs: prepare
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/bump-version.yml@v2
     with:
       release_type: ${{ needs.prepare.outputs.release_type }}
     permissions:
@@ -403,7 +421,7 @@ jobs:
   # Use the finalize workflow from the shared repository
   finalize:
     needs: bump_and_changelog
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v2
     with:
       version: ${{ needs.bump_and_changelog.outputs.new_version }}
     permissions:
@@ -412,7 +430,7 @@ jobs:
   # Use the create-release workflow from the shared repository
   create_release:
     needs: [finalize, bump_and_changelog]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v2
     with:
       version: ${{ needs.bump_and_changelog.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_and_changelog.outputs.changelog_section_heading }}
@@ -439,7 +457,7 @@ If you produce additional release artifacts (compiled binaries, Docker images, p
 
   finalize:
     needs: [bump_and_changelog, build]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/finalize-release.yml@v2
     with:
       version: ${{ needs.bump_and_changelog.outputs.new_version }}
     permissions:
@@ -447,7 +465,7 @@ If you produce additional release artifacts (compiled binaries, Docker images, p
 
   create_release:
     needs: [finalize, bump_and_changelog, build]
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/create-release.yml@v2
     with:
       version: ${{ needs.bump_and_changelog.outputs.new_version }}
       changelog_section_heading: ${{ needs.bump_and_changelog.outputs.changelog_section_heading }}

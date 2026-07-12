@@ -2,7 +2,7 @@
 # combos) attached to the GitHub release.
 #
 # The orchestrator runs
-# `bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)`,
+# `determine-release-type → bump → build-package-binary (matrix) → finalize → create → open-next-snapshot → rollback-release (on failure)`,
 # fans the build out across the configured `targets`, and auto-attaches the
 # resulting archives to the `vX.Y.Z` release.
 #
@@ -25,12 +25,7 @@ on:
 
 jobs:
   release:
-    if: |
-      contains(github.event.head_commit.message, '[release]') ||
-      contains(github.event.head_commit.message, '[release:patch]') ||
-      contains(github.event.head_commit.message, '[release:minor]') ||
-      contains(github.event.head_commit.message, '[release:major]')
-    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v1
+    uses: PrinceOfBorgo/rust-github-workflows/.github/workflows/release-binaries.yml@v2
     with:
       bin_name: my-app
       additional_files: |
