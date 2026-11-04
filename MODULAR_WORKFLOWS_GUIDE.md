@@ -447,7 +447,7 @@ If you produce additional release artifacts (compiled binaries, Docker images, p
     needs: bump_and_changelog
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build your artifacts
         run: # your build commands
       - uses: actions/upload-artifact@v7

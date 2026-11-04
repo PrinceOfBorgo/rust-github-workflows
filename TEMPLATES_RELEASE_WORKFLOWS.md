@@ -172,7 +172,7 @@ jobs:
     outputs:
       artifact_path: ${{ steps.build.outputs.artifact }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - name: Build release binary
         id: build
@@ -408,7 +408,7 @@ validate:
   needs: bump_version
   runs-on: ubuntu-latest
   steps:
-    - uses: actions/checkout@v6
+    - uses: actions/checkout@v7
     - uses: dtolnay/rust-toolchain@stable
     - run: cargo test --all-features
     - run: cargo clippy --all-targets -- -D warnings
