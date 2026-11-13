@@ -83,6 +83,11 @@ on:
         required: false
         default: '1'
         type: string
+      release_files_artifact:
+        description: 'Artifact to overlay on the checkout before building. Defaults to `release-files` (uploaded by `bump-version.yml`), so within a release run the binary is built from the bumped version instead of the `-SNAPSHOT` one; when no such artifact exists in the run, the overlay is skipped. Set to empty to disable. Default: `release-files`'
+        required: false
+        default: 'release-files'
+        type: string
     outputs:
       artifact_name:
         description: 'Workflow artifact name the archive was uploaded under.'
@@ -113,6 +118,16 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 1
+
+      # The release commit doesn't exist yet (finalize-release pushes it later).
+      # `pattern` (unlike `name`) is a no-op when the artifact isn't in this run.
+      - name: Overlay bumped release files
+        if: inputs.release_files_artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ inputs.release_files_artifact }}
+          merge-multiple: true
+          path: .
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

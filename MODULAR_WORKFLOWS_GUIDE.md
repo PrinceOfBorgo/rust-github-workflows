@@ -106,6 +106,7 @@ Sensible defaults are computed from `bin_name`, `version`, `os_label`, `arch_lab
 - `cargo_build_args` (optional, default: empty) - Extra args appended to `cargo build` (e.g. `--features foo,bar`).
 - `additional_files` (optional, default: empty) - Newline-separated files/globs (e.g. `README.md`, `LICENSE`) copied into the archive alongside the binary.
 - `retention_days` (optional, default: `'1'`) - Retention for the uploaded workflow artifact.
+- `release_files_artifact` (optional, default: `release-files`) - Artifact overlaid on the checkout before building. Within a release run this is the `release-files` artifact uploaded by `bump-version.yml`, so the binary is compiled with the bumped release version rather than the `-SNAPSHOT` one still in the triggering commit; if the run has no such artifact the overlay is skipped. Set to `''` to disable.
 
 **Outputs:**
 - `artifact_name` - Workflow artifact name the archive was uploaded under.
@@ -153,6 +154,7 @@ Builds a (multi-arch) Docker image and pushes it to a container registry. Two mo
 - `rust_targets` (optional, default: `x86_64-unknown-linux-musl`) - Targets to build when `cargo_zigbuild=true`
 - `cargo_build_args` (optional) - Extra args appended to each `cargo zigbuild --release --target <t>`
 - `zig_version` (optional, default: `0.13.0`)
+- `release_files_artifact` (optional, default: `release-files`) - Artifact overlaid on the checkout before building. Within a release run this is the `release-files` artifact uploaded by `bump-version.yml`, so the image is built with the bumped release version rather than the `-SNAPSHOT` one still in the triggering commit; if the run has no such artifact the overlay is skipped. Set to `''` to disable.
 
 **Secrets:**
 - `registry_password` (optional) - Falls back to `secrets.GITHUB_TOKEN` when omitted.

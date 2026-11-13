@@ -173,6 +173,11 @@ jobs:
       artifact_path: ${{ steps.build.outputs.artifact }}
     steps:
       - uses: actions/checkout@v7
+      # Build from the bumped version, not the -SNAPSHOT still in the triggering commit.
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-files
+          path: .
       - uses: dtolnay/rust-toolchain@stable
       - name: Build release binary
         id: build

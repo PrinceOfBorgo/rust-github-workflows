@@ -83,6 +83,11 @@ on:
         required: false
         default: '0.13.0'
         type: string
+      release_files_artifact:
+        description: 'Artifact to overlay on the checkout before building. Defaults to `release-files` (uploaded by `bump-version.yml`), so within a release run the image is built from the bumped version instead of the `-SNAPSHOT` one; when no such artifact exists in the run, the overlay is skipped. Set to empty to disable. Default: `release-files`'
+        required: false
+        default: 'release-files'
+        type: string
     secrets:
       registry_password:
         description: 'Password/token used to authenticate against the registry. Defaults to `secrets.GITHUB_TOKEN` when not provided.'
@@ -109,6 +114,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
 
+      # The release commit doesn't exist yet (finalize-release pushes it later).
+      # `pattern` (unlike `name`) is a no-op when the artifact isn't in this run.
+      - name: Overlay bumped release files
+        if: inputs.release_files_artifact != ''
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ${{ inputs.release_files_artifact }}
+          merge-multiple: true
+          path: .
+
       - name: Resolve image name
         id: image
         run: |
@@ -128,7 +143,7 @@ jobs:
 
       - name: Setup Zig
         if: inputs.cargo_zigbuild == 'true'
-        uses: goto-bus-stop/setup-zig@v2
+        uses: mlugg/setup-zig@v2
         with:
           version: ${{ inputs.zig_version }}
 
